@@ -48,7 +48,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <openssl/core_numbers.h>
+#include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/params.h>
 #include <openssl/evp.h>
@@ -64,18 +64,18 @@
  * necessary for the compiler, but provides an assurance that the signatures
  * of the functions in the dispatch table are correct.
  */
-static OSSL_OP_mac_newctx_fn kmac128_new;
-static OSSL_OP_mac_newctx_fn kmac256_new;
-static OSSL_OP_mac_dupctx_fn kmac_dup;
-static OSSL_OP_mac_freectx_fn kmac_free;
-static OSSL_OP_mac_gettable_ctx_params_fn kmac_gettable_ctx_params;
-static OSSL_OP_mac_get_ctx_params_fn kmac_get_ctx_params;
-static OSSL_OP_mac_settable_ctx_params_fn kmac_settable_ctx_params;
-static OSSL_OP_mac_set_ctx_params_fn kmac_set_ctx_params;
-static OSSL_OP_mac_size_fn kmac_size;
-static OSSL_OP_mac_init_fn kmac_init;
-static OSSL_OP_mac_update_fn kmac_update;
-static OSSL_OP_mac_final_fn kmac_final;
+static OSSL_FUNC_mac_newctx_fn kmac128_new;
+static OSSL_FUNC_mac_newctx_fn kmac256_new;
+static OSSL_FUNC_mac_dupctx_fn kmac_dup;
+static OSSL_FUNC_mac_freectx_fn kmac_free;
+static OSSL_FUNC_mac_gettable_ctx_params_fn kmac_gettable_ctx_params;
+static OSSL_FUNC_mac_get_ctx_params_fn kmac_get_ctx_params;
+static OSSL_FUNC_mac_settable_ctx_params_fn kmac_settable_ctx_params;
+static OSSL_FUNC_mac_set_ctx_params_fn kmac_set_ctx_params;
+static OSSL_FUNC_mac_size_fn kmac_size;
+static OSSL_FUNC_mac_init_fn kmac_init;
+static OSSL_FUNC_mac_update_fn kmac_update;
+static OSSL_FUNC_mac_final_fn kmac_final;
 
 #define KMAC_MAX_BLOCKSIZE ((1600 - 128*2) / 8) /* 168 */
 #define KMAC_MIN_BLOCKSIZE ((1600 - 256*2) / 8) /* 136 */
@@ -298,8 +298,7 @@ static int kmac_final(void *vmacctx, unsigned char *out, size_t *outl,
     ok = right_encode(encoded_outlen, &len, lbits)
         && EVP_DigestUpdate(ctx, encoded_outlen, len)
         && EVP_DigestFinalXOF(ctx, out, kctx->out_len);
-    if (ok && outl != NULL)
-        *outl = kctx->out_len;
+    *outl = kctx->out_len;
     return ok;
 }
 
@@ -307,7 +306,7 @@ static const OSSL_PARAM known_gettable_ctx_params[] = {
     OSSL_PARAM_size_t(OSSL_MAC_PARAM_SIZE, NULL),
     OSSL_PARAM_END
 };
-static const OSSL_PARAM *kmac_gettable_ctx_params(void)
+static const OSSL_PARAM *kmac_gettable_ctx_params(ossl_unused void *provctx)
 {
     return known_gettable_ctx_params;
 }
@@ -329,7 +328,7 @@ static const OSSL_PARAM known_settable_ctx_params[] = {
     OSSL_PARAM_octet_string(OSSL_MAC_PARAM_CUSTOM, NULL, 0),
     OSSL_PARAM_END
 };
-static const OSSL_PARAM *kmac_settable_ctx_params(void)
+static const OSSL_PARAM *kmac_settable_ctx_params(ossl_unused void *provctx)
 {
     return known_settable_ctx_params;
 }

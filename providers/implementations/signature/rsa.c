@@ -15,7 +15,7 @@
 
 #include <string.h>
 #include <openssl/crypto.h>
-#include <openssl/core_numbers.h>
+#include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/err.h>
 #include <openssl/rsa.h>
@@ -30,29 +30,29 @@
 #include "prov/provider_ctx.h"
 #include "prov/der_rsa.h"
 
-static OSSL_OP_signature_newctx_fn rsa_newctx;
-static OSSL_OP_signature_sign_init_fn rsa_sign_init;
-static OSSL_OP_signature_verify_init_fn rsa_verify_init;
-static OSSL_OP_signature_verify_recover_init_fn rsa_verify_recover_init;
-static OSSL_OP_signature_sign_fn rsa_sign;
-static OSSL_OP_signature_verify_fn rsa_verify;
-static OSSL_OP_signature_verify_recover_fn rsa_verify_recover;
-static OSSL_OP_signature_digest_sign_init_fn rsa_digest_sign_init;
-static OSSL_OP_signature_digest_sign_update_fn rsa_digest_signverify_update;
-static OSSL_OP_signature_digest_sign_final_fn rsa_digest_sign_final;
-static OSSL_OP_signature_digest_verify_init_fn rsa_digest_verify_init;
-static OSSL_OP_signature_digest_verify_update_fn rsa_digest_signverify_update;
-static OSSL_OP_signature_digest_verify_final_fn rsa_digest_verify_final;
-static OSSL_OP_signature_freectx_fn rsa_freectx;
-static OSSL_OP_signature_dupctx_fn rsa_dupctx;
-static OSSL_OP_signature_get_ctx_params_fn rsa_get_ctx_params;
-static OSSL_OP_signature_gettable_ctx_params_fn rsa_gettable_ctx_params;
-static OSSL_OP_signature_set_ctx_params_fn rsa_set_ctx_params;
-static OSSL_OP_signature_settable_ctx_params_fn rsa_settable_ctx_params;
-static OSSL_OP_signature_get_ctx_md_params_fn rsa_get_ctx_md_params;
-static OSSL_OP_signature_gettable_ctx_md_params_fn rsa_gettable_ctx_md_params;
-static OSSL_OP_signature_set_ctx_md_params_fn rsa_set_ctx_md_params;
-static OSSL_OP_signature_settable_ctx_md_params_fn rsa_settable_ctx_md_params;
+static OSSL_FUNC_signature_newctx_fn rsa_newctx;
+static OSSL_FUNC_signature_sign_init_fn rsa_sign_init;
+static OSSL_FUNC_signature_verify_init_fn rsa_verify_init;
+static OSSL_FUNC_signature_verify_recover_init_fn rsa_verify_recover_init;
+static OSSL_FUNC_signature_sign_fn rsa_sign;
+static OSSL_FUNC_signature_verify_fn rsa_verify;
+static OSSL_FUNC_signature_verify_recover_fn rsa_verify_recover;
+static OSSL_FUNC_signature_digest_sign_init_fn rsa_digest_sign_init;
+static OSSL_FUNC_signature_digest_sign_update_fn rsa_digest_signverify_update;
+static OSSL_FUNC_signature_digest_sign_final_fn rsa_digest_sign_final;
+static OSSL_FUNC_signature_digest_verify_init_fn rsa_digest_verify_init;
+static OSSL_FUNC_signature_digest_verify_update_fn rsa_digest_signverify_update;
+static OSSL_FUNC_signature_digest_verify_final_fn rsa_digest_verify_final;
+static OSSL_FUNC_signature_freectx_fn rsa_freectx;
+static OSSL_FUNC_signature_dupctx_fn rsa_dupctx;
+static OSSL_FUNC_signature_get_ctx_params_fn rsa_get_ctx_params;
+static OSSL_FUNC_signature_gettable_ctx_params_fn rsa_gettable_ctx_params;
+static OSSL_FUNC_signature_set_ctx_params_fn rsa_set_ctx_params;
+static OSSL_FUNC_signature_settable_ctx_params_fn rsa_settable_ctx_params;
+static OSSL_FUNC_signature_get_ctx_md_params_fn rsa_get_ctx_md_params;
+static OSSL_FUNC_signature_gettable_ctx_md_params_fn rsa_gettable_ctx_md_params;
+static OSSL_FUNC_signature_set_ctx_md_params_fn rsa_set_ctx_md_params;
+static OSSL_FUNC_signature_settable_ctx_md_params_fn rsa_settable_ctx_md_params;
 
 static OSSL_ITEM padding_item[] = {
     { RSA_PKCS1_PADDING,        OSSL_PKEY_RSA_PAD_MODE_PKCSV15 },
@@ -176,16 +176,16 @@ static int rsa_check_padding(int mdnid, int padding)
     return 1;
 }
 
-static int rsa_check_parameters(EVP_MD *md, PROV_RSA_CTX *prsactx)
+static int rsa_check_parameters(PROV_RSA_CTX *prsactx)
 {
     if (prsactx->pad_mode == RSA_PKCS1_PSS_PADDING) {
         int max_saltlen;
 
         /* See if minimum salt length exceeds maximum possible */
-        max_saltlen = RSA_size(prsactx->rsa) - EVP_MD_size(md);
+        max_saltlen = RSA_size(prsactx->rsa) - EVP_MD_size(prsactx->md);
         if ((RSA_bits(prsactx->rsa) & 0x7) == 1)
             max_saltlen--;
-        if (prsactx->min_saltlen > max_saltlen) {
+        if (prsactx->min_saltlen < 0 || prsactx->min_saltlen > max_saltlen) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_SALT_LENGTH);
             return 0;
         }
@@ -230,7 +230,6 @@ static int rsa_setup_md(PROV_RSA_CTX *ctx, const char *mdname,
         if (md == NULL
             || md_nid == NID_undef
             || !rsa_check_padding(md_nid, ctx->pad_mode)
-            || !rsa_check_parameters(md, ctx)
             || mdname_len >= sizeof(ctx->mdname)) {
             if (md == NULL)
                 ERR_raise_data(ERR_LIB_PROV, PROV_R_INVALID_DIGEST,
@@ -365,7 +364,8 @@ static int rsa_signature_init(void *vprsactx, void *vrsa, int operation)
                 prsactx->saltlen = min_saltlen;
 
                 return rsa_setup_md(prsactx, mdname, prsactx->propq)
-                    && rsa_setup_mgf1_md(prsactx, mgf1mdname, prsactx->propq);
+                    && rsa_setup_mgf1_md(prsactx, mgf1mdname, prsactx->propq)
+                    && rsa_check_parameters(prsactx);
             }
         }
 
@@ -725,7 +725,8 @@ static int rsa_digest_signverify_init(void *vprsactx, const char *mdname,
 {
     PROV_RSA_CTX *prsactx = (PROV_RSA_CTX *)vprsactx;
 
-    prsactx->flag_allow_md = 0;
+    if (prsactx != NULL)
+        prsactx->flag_allow_md = 0;
     if (!rsa_signature_init(vprsactx, vrsa, operation)
         || !rsa_setup_md(prsactx, mdname, NULL)) /* TODO RL */
         return 0;
@@ -775,10 +776,11 @@ static int rsa_digest_sign_final(void *vprsactx, unsigned char *sig,
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int dlen = 0;
 
-    prsactx->flag_allow_md = 1;
-    if (prsactx == NULL || prsactx->mdctx == NULL)
+    if (prsactx == NULL)
         return 0;
-
+    prsactx->flag_allow_md = 1;
+    if (prsactx->mdctx == NULL)
+        return 0;
     /*
      * If sig is NULL then we're just finding out the sig size. Other fields
      * are ignored. Defer to rsa_sign.
@@ -810,8 +812,10 @@ int rsa_digest_verify_final(void *vprsactx, const unsigned char *sig,
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int dlen = 0;
 
+    if (prsactx == NULL)
+        return 0;
     prsactx->flag_allow_md = 1;
-    if (prsactx == NULL || prsactx->mdctx == NULL)
+    if (prsactx->mdctx == NULL)
         return 0;
 
     /*
@@ -832,14 +836,14 @@ static void rsa_freectx(void *vprsactx)
     if (prsactx == NULL)
         return;
 
-    RSA_free(prsactx->rsa);
     EVP_MD_CTX_free(prsactx->mdctx);
     EVP_MD_free(prsactx->md);
     EVP_MD_free(prsactx->mgf1_md);
     OPENSSL_free(prsactx->propq);
     free_tbuf(prsactx);
+    RSA_free(prsactx->rsa);
 
-    OPENSSL_clear_free(prsactx, sizeof(prsactx));
+    OPENSSL_clear_free(prsactx, sizeof(*prsactx));
 }
 
 static void *rsa_dupctx(void *vprsactx)
@@ -983,7 +987,7 @@ static const OSSL_PARAM known_gettable_ctx_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *rsa_gettable_ctx_params(void)
+static const OSSL_PARAM *rsa_gettable_ctx_params(ossl_unused void *provctx)
 {
     return known_gettable_ctx_params;
 }
@@ -1151,7 +1155,7 @@ static int rsa_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
         }
 
         if (rsa_pss_restricted(prsactx)) {
-            switch (prsactx->saltlen) {
+            switch (saltlen) {
             case RSA_PSS_SALTLEN_AUTO:
                 if (prsactx->operation == EVP_PKEY_OP_VERIFY) {
                     ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_PSS_SALTLEN);
@@ -1168,7 +1172,7 @@ static int rsa_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
                                    EVP_MD_size(prsactx->md));
                     return 0;
                 }
-                /* FALLTHRU */
+                break;
             default:
                 if (saltlen >= 0 && saltlen < prsactx->min_saltlen) {
                     ERR_raise_data(ERR_LIB_PROV,
@@ -1233,7 +1237,7 @@ static const OSSL_PARAM known_settable_ctx_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *rsa_settable_ctx_params(void)
+static const OSSL_PARAM *rsa_settable_ctx_params(ossl_unused void *provctx)
 {
     /*
      * TODO(3.0): Should this function return a different set of settable ctx

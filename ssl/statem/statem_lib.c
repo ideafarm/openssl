@@ -94,6 +94,8 @@ int tls_close_construct_packet(SSL *s, WPACKET *pkt, int htype)
 
 int tls_setup_handshake(SSL *s)
 {
+    int ver_min, ver_max, ok;
+
     if (!ssl3_init_finished_mac(s)) {
         /* SSLfatal() already called */
         return 0;
@@ -102,20 +104,61 @@ int tls_setup_handshake(SSL *s)
     /* Reset any extension flags */
     memset(s->ext.extflags, 0, sizeof(s->ext.extflags));
 
+    if (ssl_get_min_max_version(s, &ver_min, &ver_max, NULL) != 0) {
+        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_SETUP_HANDSHAKE,
+                    ERR_R_INTERNAL_ERROR);
+        return 0;
+    }
+
+    /* Sanity check that we have MD5-SHA1 if we need it */
+    if (s->ctx->ssl_digest_methods[SSL_MD_MD5_SHA1_IDX] == NULL) {
+        int md5sha1_needed = 0;
+
+        /* We don't have MD5-SHA1 - do we need it? */
+        if (SSL_IS_DTLS(s)) {
+            if (DTLS_VERSION_LE(ver_max, DTLS1_VERSION))
+                md5sha1_needed = 1;
+        } else {
+            if (ver_max <= TLS1_1_VERSION)
+                md5sha1_needed = 1;
+        }
+        if (md5sha1_needed) {
+            SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE, SSL_F_TLS_SETUP_HANDSHAKE,
+                        SSL_R_NO_SUITABLE_DIGEST_ALGORITHM);
+            ERR_add_error_data(1, "The max supported SSL/TLS version needs the"
+                                    " MD5-SHA1 digest but it is not available"
+                                    " in the loaded providers. Use (D)TLSv1.2 or"
+                                    " above, or load different providers");
+            return 0;
+        }
+
+        ok = 1;
+        /* Don't allow TLSv1.1 or below to be negotiated */
+        if (SSL_IS_DTLS(s)) {
+            if (DTLS_VERSION_LT(ver_min, DTLS1_2_VERSION))
+                ok = SSL_set_min_proto_version(s, DTLS1_2_VERSION);
+        } else {
+            if (ver_min < TLS1_2_VERSION)
+                ok = SSL_set_min_proto_version(s, TLS1_2_VERSION);
+        }
+        if (!ok) {
+            /* Shouldn't happen */
+            SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE, SSL_F_TLS_SETUP_HANDSHAKE,
+                     ERR_R_INTERNAL_ERROR);
+            return 0;
+        }
+    }
+
+    ok = 0;
     if (s->server) {
         STACK_OF(SSL_CIPHER) *ciphers = SSL_get_ciphers(s);
-        int i, ver_min, ver_max, ok = 0;
+        int i;
 
         /*
          * Sanity check that the maximum version we accept has ciphers
          * enabled. For clients we do this check during construction of the
          * ClientHello.
          */
-        if (ssl_get_min_max_version(s, &ver_min, &ver_max, NULL) != 0) {
-            SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_SETUP_HANDSHAKE,
-                     ERR_R_INTERNAL_ERROR);
-            return 0;
-        }
         for (i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
             const SSL_CIPHER *c = sk_SSL_CIPHER_value(ciphers, i);
 
@@ -277,9 +320,10 @@ int tls_construct_cert_verify(SSL *s, WPACKET *pkt)
         goto err;
     }
 
-    if (EVP_DigestSignInit_ex(mctx, &pctx,
-                              md == NULL ? NULL : EVP_MD_name(md),
-                              s->ctx->propq, pkey, s->ctx->libctx) <= 0) {
+    if (EVP_DigestSignInit_with_libctx(mctx, &pctx,
+                                       md == NULL ? NULL : EVP_MD_name(md),
+                                       s->ctx->libctx, s->ctx->propq,
+                                       pkey) <= 0) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_CERT_VERIFY,
                  ERR_R_EVP_LIB);
         goto err;
@@ -472,9 +516,10 @@ MSG_PROCESS_RETURN tls_process_cert_verify(SSL *s, PACKET *pkt)
     OSSL_TRACE1(TLS, "Using client verify alg %s\n",
                 md == NULL ? "n/a" : EVP_MD_name(md));
 
-    if (EVP_DigestVerifyInit_ex(mctx, &pctx,
-                                md == NULL ? NULL : EVP_MD_name(md),
-                                s->ctx->propq, pkey, s->ctx->libctx) <= 0) {
+    if (EVP_DigestVerifyInit_with_libctx(mctx, &pctx,
+                                         md == NULL ? NULL : EVP_MD_name(md),
+                                         s->ctx->libctx, s->ctx->propq,
+                                         pkey) <= 0) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_PROCESS_CERT_VERIFY,
                  ERR_R_EVP_LIB);
         goto err;
@@ -537,7 +582,7 @@ MSG_PROCESS_RETURN tls_process_cert_verify(SSL *s, PACKET *pkt)
      * certificate after the CertVerify instead of when we get the
      * CertificateRequest. This is because in TLSv1.3 the CertificateRequest
      * comes *before* the Certificate message. In TLSv1.2 it comes after. We
-     * want to make sure that SSL_get_peer_certificate() will return the actual
+     * want to make sure that SSL_get1_peer_certificate() will return the actual
      * server certificate from the client_cert_cb callback.
      */
     if (!s->server && SSL_IS_TLS13(s) && s->s3.tmp.cert_req == 1)
@@ -1679,10 +1724,21 @@ int ssl_check_version_downgrade(SSL *s)
  */
 int ssl_set_version_bound(int method_version, int version, int *bound)
 {
+    int valid_tls;
+    int valid_dtls;
+
     if (version == 0) {
         *bound = version;
         return 1;
     }
+
+    valid_tls = version >= SSL3_VERSION && version <= TLS_MAX_VERSION_INTERNAL;
+    valid_dtls =
+        DTLS_VERSION_LE(version, DTLS_MAX_VERSION_INTERNAL) &&
+        DTLS_VERSION_GE(version, DTLS1_BAD_VER);
+
+    if (!valid_tls && !valid_dtls)
+        return 0;
 
     /*-
      * Restrict TLS methods to TLS protocol versions.
@@ -1694,31 +1750,24 @@ int ssl_set_version_bound(int method_version, int version, int *bound)
      * configurations.  If the MIN (supported) version ever rises, the user's
      * "floor" remains valid even if no longer available.  We don't expect the
      * MAX ceiling to ever get lower, so making that variable makes sense.
+     *
+     * We ignore attempts to set bounds on version-inflexible methods,
+     * returning success.
      */
     switch (method_version) {
     default:
-        /*
-         * XXX For fixed version methods, should we always fail and not set any
-         * bounds, always succeed and not set any bounds, or set the bounds and
-         * arrange to fail later if they are not met?  At present fixed-version
-         * methods are not subject to controls that disable individual protocol
-         * versions.
-         */
-        return 0;
+        break;
 
     case TLS_ANY_VERSION:
-        if (version < SSL3_VERSION || version > TLS_MAX_VERSION_INTERNAL)
-            return 0;
+        if (valid_tls)
+            *bound = version;
         break;
 
     case DTLS_ANY_VERSION:
-        if (DTLS_VERSION_GT(version, DTLS_MAX_VERSION_INTERNAL) ||
-            DTLS_VERSION_LT(version, DTLS1_BAD_VER))
-            return 0;
+        if (valid_dtls)
+            *bound = version;
         break;
     }
-
-    *bound = version;
     return 1;
 }
 

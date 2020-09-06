@@ -160,6 +160,12 @@ how to configure any modules in the library. It is not an error to leave
 any module in its default configuration. An application can specify a
 different name by calling CONF_modules_load_file(), for example, directly.
 
+OpenSSL also looks up the value of B<config_diagnostics>.
+If this exists and has a nonzero numeric value, any error suppressing flags
+passed to CONF_modules_load() will be ignored.
+This is useful for diagnosing misconfigurations and should not be used in
+production.
+
  # This must be in the default section
  openssl_conf = openssl_init
 
@@ -299,10 +305,15 @@ section with the configuration for that name. For example:
 
 The configuration name B<system_default> has a special meaning.  If it
 exists, it is applied whenever an B<SSL_CTX> object is created.  For example,
-to impose a system-wide minimum on protocol version:
+to impose system-wide minimum TLS and DTLS protocol versions:
 
  [tls_system_default]
  MinProtocol = TLSv1.2
+ MinProtocol = DTLSv1.2
+
+The minimum TLS protocol is applied to B<SSL_CTX> objects that are TLS-based,
+and the minimum DTLS protocol to those are DTLS-based.
+The same applies also to maximum versions set with B<MaxProtocol>.
 
 Each configuration section consists of name/value pairs that are parsed
 by B<SSL_CONF_cmd(3)>, which will be called by SSL_CTX_config() or
@@ -474,8 +485,10 @@ configuration files using that syntax will have to be modified.
 =head1 SEE ALSO
 
 L<openssl-x509(1)>, L<openssl-req(1)>, L<openssl-ca(1)>,
+L<openssl-fipsinstall(1)>,
 L<ASN1_generate_nconf(3)>,
 L<EVP_set_default_properties(3)>,
+L<CONF_modules_load(3)>,
 L<CONF_modules_load_file(3)>,
 L<fips_config(5)>, and
 L<x509v3_config(5)>.

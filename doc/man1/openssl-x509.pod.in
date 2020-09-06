@@ -386,7 +386,8 @@ Names and values of these options are algorithm-specific.
 
 =item B<-passin> I<arg>
 
-The key password source. For more information about the format of I<arg>
+The key and certificate file password source.
+For more information about the format of I<arg>
 see L<openssl(1)/Pass Phrase Options>.
 
 =item B<-clrext>
@@ -834,6 +835,8 @@ All B<-keyform> and B<-CAkeyform> values except B<ENGINE>
 have become obsolete in OpenSSL 3.0.0 and have no effect.
 
 The B<-CAform> option has become obsolete in OpenSSL 3.0.0 and has no effect.
+
+The B<-engine> option was deprecated in OpenSSL 3.0.
 
 =head1 COPYRIGHT
 

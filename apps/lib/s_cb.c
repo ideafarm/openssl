@@ -570,8 +570,8 @@ void msg_cb(int write_p, int version, int content_type, const void *buf,
 {
     BIO *bio = arg;
     const char *str_write_p = write_p ? ">>>" : "<<<";
-    const char *str_version = lookup(version, ssl_versions, "???");
-    const char *str_content_type = "", *str_details1 = "", *str_details2 = "";
+    char tmpbuf[128];
+    const char *str_version, *str_content_type = "", *str_details1 = "", *str_details2 = "";
     const unsigned char* bp = buf;
 
     if (version == SSL3_VERSION ||
@@ -580,11 +580,14 @@ void msg_cb(int write_p, int version, int content_type, const void *buf,
         version == TLS1_2_VERSION ||
         version == TLS1_3_VERSION ||
         version == DTLS1_VERSION || version == DTLS1_BAD_VER) {
+        str_version = lookup(version, ssl_versions, "???");
         switch (content_type) {
-        case 20:
+        case SSL3_RT_CHANGE_CIPHER_SPEC:
+            /* type 20 */
             str_content_type = ", ChangeCipherSpec";
             break;
-        case 21:
+        case SSL3_RT_ALERT:
+            /* type 21 */
             str_content_type = ", Alert";
             str_details1 = ", ???";
             if (len == 2) {
@@ -599,16 +602,32 @@ void msg_cb(int write_p, int version, int content_type, const void *buf,
                 str_details2 = lookup((int)bp[1], alert_types, " ???");
             }
             break;
-        case 22:
+        case SSL3_RT_HANDSHAKE:
+            /* type 22 */
             str_content_type = ", Handshake";
             str_details1 = "???";
             if (len > 0)
                 str_details1 = lookup((int)bp[0], handshakes, "???");
             break;
-        case 23:
+        case SSL3_RT_APPLICATION_DATA:
+            /* type 23 */
             str_content_type = ", ApplicationData";
             break;
+        case SSL3_RT_HEADER:
+            /* type 256 */
+            str_content_type = ", RecordHeader";
+            break;
+        case SSL3_RT_INNER_CONTENT_TYPE:
+            /* type 257 */
+            str_content_type = ", InnerContent";
+            break;
+        default:
+            BIO_snprintf(tmpbuf, sizeof(tmpbuf)-1, ", Unknown (content_type=%d)", content_type);
+            str_content_type = tmpbuf;
         }
+    } else {
+        BIO_snprintf(tmpbuf, sizeof(tmpbuf)-1, "Not TLS data or unknown version (version=%d, content_type=%d)", version, content_type);
+        str_version = tmpbuf;
     }
 
     BIO_printf(bio, "%s %s%s [length %04lx]%s%s\n", str_write_p, str_version,
@@ -788,7 +807,7 @@ int generate_cookie_callback(SSL *ssl, unsigned char *cookie,
             BIO_printf(bio_err, "HMAC not found\n");
             goto end;
     }
-    ctx = EVP_MAC_new_ctx(hmac);
+    ctx = EVP_MAC_CTX_new(hmac);
     if (ctx == NULL) {
             BIO_printf(bio_err, "HMAC context allocation failed\n");
             goto end;
@@ -797,7 +816,7 @@ int generate_cookie_callback(SSL *ssl, unsigned char *cookie,
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, cookie_secret,
                                              COOKIE_SECRET_LENGTH);
     *p = OSSL_PARAM_construct_end();
-    if (!EVP_MAC_set_ctx_params(ctx, params)) {
+    if (!EVP_MAC_CTX_set_params(ctx, params)) {
             BIO_printf(bio_err, "HMAC context parameter setting failed\n");
             goto end;
     }
@@ -1040,8 +1059,7 @@ int load_excert(SSL_EXCERT **pexc)
         if (exc->key == NULL)
             return 0;
         if (exc->chainfile != NULL) {
-            if (!load_certs(exc->chainfile, &exc->chain, FORMAT_PEM, NULL,
-                            "Server Chain"))
+            if (!load_certs(exc->chainfile, &exc->chain, NULL, "Server Chain"))
                 return 0;
         }
     }
@@ -1227,7 +1245,7 @@ void print_ssl_summary(SSL *s)
     c = SSL_get_current_cipher(s);
     BIO_printf(bio_err, "Ciphersuite: %s\n", SSL_CIPHER_get_name(c));
     do_print_sigalgs(bio_err, s, 0);
-    peer = SSL_get_peer_certificate(s);
+    peer = SSL_get0_peer_certificate(s);
     if (peer != NULL) {
         int nid;
 
@@ -1243,7 +1261,6 @@ void print_ssl_summary(SSL *s)
     } else {
         BIO_puts(bio_err, "No peer certificate\n");
     }
-    X509_free(peer);
 #ifndef OPENSSL_NO_EC
     ssl_print_point_formats(bio_err, s);
     if (SSL_is_server(s))

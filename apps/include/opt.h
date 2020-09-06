@@ -273,9 +273,12 @@
         OPT_PROV_PROVIDER, OPT_PROV_PROVIDER_PATH, \
         OPT_PROV__LAST
 
+# define OPT_CONFIG_OPTION \
+        { "config", OPT_CONFIG, '<', "Load a configuration file (this may load modules)" }
+
 # define OPT_PROV_OPTIONS \
         OPT_SECTION("Provider"), \
-        { "provider_path", OPT_PROV_PROVIDER_PATH, 's', "Provider load path (must be before 'provider' argument if required)" }, \
+        { "provider-path", OPT_PROV_PROVIDER_PATH, 's', "Provider load path (must be before 'provider' argument if required)" }, \
         { "provider", OPT_PROV_PROVIDER, 's', "Provider to load (can be specified multiple times)" }
 
 # define OPT_PROV_CASES \

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2020 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -61,12 +61,14 @@
 #include "prov/provider_util.h"
 #include "e_os.h"
 
-static OSSL_OP_kdf_newctx_fn kdf_tls1_prf_new;
-static OSSL_OP_kdf_freectx_fn kdf_tls1_prf_free;
-static OSSL_OP_kdf_reset_fn kdf_tls1_prf_reset;
-static OSSL_OP_kdf_derive_fn kdf_tls1_prf_derive;
-static OSSL_OP_kdf_settable_ctx_params_fn kdf_tls1_prf_settable_ctx_params;
-static OSSL_OP_kdf_set_ctx_params_fn kdf_tls1_prf_set_ctx_params;
+static OSSL_FUNC_kdf_newctx_fn kdf_tls1_prf_new;
+static OSSL_FUNC_kdf_freectx_fn kdf_tls1_prf_free;
+static OSSL_FUNC_kdf_reset_fn kdf_tls1_prf_reset;
+static OSSL_FUNC_kdf_derive_fn kdf_tls1_prf_derive;
+static OSSL_FUNC_kdf_settable_ctx_params_fn kdf_tls1_prf_settable_ctx_params;
+static OSSL_FUNC_kdf_set_ctx_params_fn kdf_tls1_prf_set_ctx_params;
+static OSSL_FUNC_kdf_gettable_ctx_params_fn kdf_tls1_prf_gettable_ctx_params;
+static OSSL_FUNC_kdf_get_ctx_params_fn kdf_tls1_prf_get_ctx_params;
 
 static int tls1_prf_alg(EVP_MAC_CTX *mdctx, EVP_MAC_CTX *sha1ctx,
                         const unsigned char *sec, size_t slen,
@@ -115,12 +117,14 @@ static void kdf_tls1_prf_free(void *vctx)
 static void kdf_tls1_prf_reset(void *vctx)
 {
     TLS1_PRF *ctx = (TLS1_PRF *)vctx;
+    void *provctx = ctx->provctx;
 
-    EVP_MAC_free_ctx(ctx->P_hash);
-    EVP_MAC_free_ctx(ctx->P_sha1);
+    EVP_MAC_CTX_free(ctx->P_hash);
+    EVP_MAC_CTX_free(ctx->P_sha1);
     OPENSSL_clear_free(ctx->sec, ctx->seclen);
     OPENSSL_cleanse(ctx->seed, ctx->seedlen);
     memset(ctx, 0, sizeof(*ctx));
+    ctx->provctx = provctx;
 }
 
 static int kdf_tls1_prf_derive(void *vctx, unsigned char *key,
@@ -163,7 +167,7 @@ static int kdf_tls1_prf_set_ctx_params(void *vctx, const OSSL_PARAM params[])
                                                       NULL, SN_sha1, libctx))
                 return 0;
         } else {
-            EVP_MAC_free_ctx(ctx->P_sha1);
+            EVP_MAC_CTX_free(ctx->P_sha1);
             if (!ossl_prov_macctx_load_from_params(&ctx->P_hash, params,
                                                    OSSL_MAC_NAME_HMAC,
                                                    NULL, NULL, libctx))
@@ -179,9 +183,6 @@ static int kdf_tls1_prf_set_ctx_params(void *vctx, const OSSL_PARAM params[])
     }
     /* The seed fields concatenate, so process them all */
     if ((p = OSSL_PARAM_locate_const(params, OSSL_KDF_PARAM_SEED)) != NULL) {
-        OPENSSL_cleanse(ctx->seed, ctx->seedlen);
-        ctx->seedlen = 0;
-
         for (; p != NULL; p = OSSL_PARAM_locate_const(p + 1,
                                                       OSSL_KDF_PARAM_SEED)) {
             const void *q = ctx->seed + ctx->seedlen;
@@ -199,7 +200,7 @@ static int kdf_tls1_prf_set_ctx_params(void *vctx, const OSSL_PARAM params[])
     return 1;
 }
 
-static const OSSL_PARAM *kdf_tls1_prf_settable_ctx_params(void)
+static const OSSL_PARAM *kdf_tls1_prf_settable_ctx_params(ossl_unused void *ctx)
 {
     static const OSSL_PARAM known_settable_ctx_params[] = {
         OSSL_PARAM_utf8_string(OSSL_KDF_PARAM_PROPERTIES, NULL, 0),
@@ -220,7 +221,7 @@ static int kdf_tls1_prf_get_ctx_params(void *vctx, OSSL_PARAM params[])
     return -2;
 }
 
-static const OSSL_PARAM *kdf_tls1_prf_gettable_ctx_params(void)
+static const OSSL_PARAM *kdf_tls1_prf_gettable_ctx_params(ossl_unused void *ctx)
 {
     static const OSSL_PARAM known_gettable_ctx_params[] = {
         OSSL_PARAM_size_t(OSSL_KDF_PARAM_SIZE, NULL),
@@ -280,7 +281,7 @@ static int tls1_prf_P_hash(EVP_MAC_CTX *ctx_init,
     *p++ = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY,
                                              (void *)sec, sec_len);
     *p = OSSL_PARAM_construct_end();
-    if (!EVP_MAC_set_ctx_params(ctx_init, params))
+    if (!EVP_MAC_CTX_set_params(ctx_init, params))
         goto err;
     if (!EVP_MAC_init(ctx_init))
         goto err;
@@ -288,7 +289,7 @@ static int tls1_prf_P_hash(EVP_MAC_CTX *ctx_init,
     if (chunk == 0)
         goto err;
     /* A(0) = seed */
-    ctx_Ai = EVP_MAC_dup_ctx(ctx_init);
+    ctx_Ai = EVP_MAC_CTX_dup(ctx_init);
     if (ctx_Ai == NULL)
         goto err;
     if (seed != NULL && !EVP_MAC_update(ctx_Ai, seed, seed_len))
@@ -298,18 +299,18 @@ static int tls1_prf_P_hash(EVP_MAC_CTX *ctx_init,
         /* calc: A(i) = HMAC_<hash>(secret, A(i-1)) */
         if (!EVP_MAC_final(ctx_Ai, Ai, &Ai_len, sizeof(Ai)))
             goto err;
-        EVP_MAC_free_ctx(ctx_Ai);
+        EVP_MAC_CTX_free(ctx_Ai);
         ctx_Ai = NULL;
 
         /* calc next chunk: HMAC_<hash>(secret, A(i) + seed) */
-        ctx = EVP_MAC_dup_ctx(ctx_init);
+        ctx = EVP_MAC_CTX_dup(ctx_init);
         if (ctx == NULL)
             goto err;
         if (!EVP_MAC_update(ctx, Ai, Ai_len))
             goto err;
         /* save state for calculating next A(i) value */
         if (olen > chunk) {
-            ctx_Ai = EVP_MAC_dup_ctx(ctx);
+            ctx_Ai = EVP_MAC_CTX_dup(ctx);
             if (ctx_Ai == NULL)
                 goto err;
         }
@@ -324,15 +325,15 @@ static int tls1_prf_P_hash(EVP_MAC_CTX *ctx_init,
         }
         if (!EVP_MAC_final(ctx, out, NULL, olen))
             goto err;
-        EVP_MAC_free_ctx(ctx);
+        EVP_MAC_CTX_free(ctx);
         ctx = NULL;
         out += chunk;
         olen -= chunk;
     }
     ret = 1;
  err:
-    EVP_MAC_free_ctx(ctx);
-    EVP_MAC_free_ctx(ctx_Ai);
+    EVP_MAC_CTX_free(ctx);
+    EVP_MAC_CTX_free(ctx_Ai);
     OPENSSL_cleanse(Ai, sizeof(Ai));
     return ret;
 }

@@ -66,7 +66,7 @@ int RSA_generate_multi_prime_key(RSA *rsa, int bits, int primes,
         else
             return 0;
     }
-#endif /* FIPS_MODUKE */
+#endif /* FIPS_MODULE */
     return rsa_keygen(rsa->libctx, rsa, bits, primes, e_value, cb, 0);
 }
 
@@ -126,18 +126,24 @@ static int rsa_multiprime_keygen(RSA *rsa, int bits, int primes,
         goto err;
     if (!rsa->d && ((rsa->d = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->d, BN_FLG_CONSTTIME);
     if (!rsa->e && ((rsa->e = BN_new()) == NULL))
         goto err;
     if (!rsa->p && ((rsa->p = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->p, BN_FLG_CONSTTIME);
     if (!rsa->q && ((rsa->q = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->q, BN_FLG_CONSTTIME);
     if (!rsa->dmp1 && ((rsa->dmp1 = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->dmp1, BN_FLG_CONSTTIME);
     if (!rsa->dmq1 && ((rsa->dmq1 = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->dmq1, BN_FLG_CONSTTIME);
     if (!rsa->iqmp && ((rsa->iqmp = BN_secure_new()) == NULL))
         goto err;
+    BN_set_flags(rsa->iqmp, BN_FLG_CONSTTIME);
 
     /* initialize multi-prime components */
     if (primes > RSA_DEFAULT_PRIME_NUM) {
@@ -445,6 +451,12 @@ static int rsa_keygen(OPENSSL_CTX *libctx, RSA *rsa, int bits, int primes,
             BN_clear_free(rsa->dmp1);
             BN_clear_free(rsa->dmq1);
             BN_clear_free(rsa->iqmp);
+            rsa->d = NULL;
+            rsa->p = NULL;
+            rsa->q = NULL;
+            rsa->dmp1 = NULL;
+            rsa->dmq1 = NULL;
+            rsa->iqmp = NULL;
         }
     }
     return ok;

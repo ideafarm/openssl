@@ -11,7 +11,7 @@
 # define OSSL_INTERNAL_PROVIDER_H
 
 # include <openssl/core.h>
-# include <openssl/core_numbers.h>
+# include <openssl/core_dispatch.h>
 # include "internal/dso.h"
 # include "internal/symhacks.h"
 
@@ -40,6 +40,9 @@ int ossl_provider_set_fallback(OSSL_PROVIDER *prov);
 int ossl_provider_set_module_path(OSSL_PROVIDER *prov, const char *module_path);
 int ossl_provider_add_parameter(OSSL_PROVIDER *prov, const char *name,
                                 const char *value);
+
+/* Disable fallback loading */
+int ossl_provider_disable_fallback_loading(OPENSSL_CTX *libctx);
 
 /*
  * Activate the Provider
@@ -75,6 +78,7 @@ int ossl_provider_get_capabilities(const OSSL_PROVIDER *prov,
                                    const char *capability,
                                    OSSL_CALLBACK *cb,
                                    void *arg);
+int ossl_provider_self_test(const OSSL_PROVIDER *prov);
 const OSSL_ALGORITHM *ossl_provider_query_operation(const OSSL_PROVIDER *prov,
                                                     int operation_id,
                                                     int *no_cache);

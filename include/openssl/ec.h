@@ -47,6 +47,7 @@ typedef enum {
     POINT_CONVERSION_HYBRID = 6
 } point_conversion_form_t;
 
+#  include <openssl/params.h>
 #  ifndef OPENSSL_NO_DEPRECATED_3_0
 typedef struct ec_method_st EC_METHOD;
 #  endif
@@ -378,6 +379,19 @@ EC_GROUP *EC_GROUP_new_curve_GFp(const BIGNUM *p, const BIGNUM *a,
 EC_GROUP *EC_GROUP_new_curve_GF2m(const BIGNUM *p, const BIGNUM *a,
                                   const BIGNUM *b, BN_CTX *ctx);
 #  endif
+
+/**
+ * Creates a EC_GROUP object with a curve specified by parameters.
+ * The parameters may be explicit or a named curve,
+ *  \param  params A list of parameters describing the group.
+ *  \param  libctx The associated library context or NULL for the default
+ *                 context
+ *  \param  propq  A property query string
+ *  \return newly created EC_GROUP object with specified parameters or NULL
+ *          if an error occurred
+ */
+EC_GROUP *EC_GROUP_new_from_params(const OSSL_PARAM params[],
+                                   OPENSSL_CTX *libctx, const char *propq);
 
 /**
  * Creates a EC_GROUP object with a curve specified by a NID
@@ -1500,9 +1514,10 @@ int EVP_PKEY_CTX_get0_ecdh_kdf_ukm(EVP_PKEY_CTX *ctx, unsigned char **ukm);
 #  define EVP_PKEY_CTRL_GET_EC_KDF_OUTLEN             (EVP_PKEY_ALG_CTRL + 8)
 #  define EVP_PKEY_CTRL_EC_KDF_UKM                    (EVP_PKEY_ALG_CTRL + 9)
 #  define EVP_PKEY_CTRL_GET_EC_KDF_UKM                (EVP_PKEY_ALG_CTRL + 10)
-#  define EVP_PKEY_CTRL_SET1_ID                       (EVP_PKEY_ALG_CTRL + 11)
-#  define EVP_PKEY_CTRL_GET1_ID                       (EVP_PKEY_ALG_CTRL + 12)
-#  define EVP_PKEY_CTRL_GET1_ID_LEN                   (EVP_PKEY_ALG_CTRL + 13)
+/* TODO move next three #defines to evp.h when 'breaking' change is possible */
+#  define EVP_PKEY_CTRL_SET1_ID                       15
+#  define EVP_PKEY_CTRL_GET1_ID                       16
+#  define EVP_PKEY_CTRL_GET1_ID_LEN                   17
 
 /* KDF types */
 #  define EVP_PKEY_ECDH_KDF_NONE                      1

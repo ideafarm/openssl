@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2017-2020 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -65,7 +65,7 @@ static void test_fail_string_common(const char *prefix, const char *file,
         goto fin;
     }
 
-    if (l1 != l2 || strcmp(m1, m2) != 0)
+    if (l1 != l2 || strncmp(m1, m2, l1) != 0)
         test_diff_header(left, right);
 
     while (l1 > 0 || l2 > 0) {

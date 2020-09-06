@@ -32,6 +32,7 @@ B<openssl> B<cmp>
 [B<-ref> I<value>]
 [B<-secret> I<arg>]
 [B<-cert> I<filename>]
+[B<-own_trusted> I<filenames>]
 [B<-key> I<filename>]
 [B<-keypass> I<arg>]
 [B<-digest> I<name>]
@@ -63,15 +64,15 @@ B<openssl> B<cmp>
 [B<-implicit_confirm>]
 [B<-disable_confirm>]
 [B<-certout> I<filename>]
+[B<-chainout> I<filename>]
 
 [B<-oldcert> I<filename>]
 [B<-revreason> I<number>]
 
 [B<-certform> I<PEM|DER>]
 [B<-keyform> I<PEM|DER|P12|ENGINE>]
-[B<-certsform> I<PEM|DER|P12>]
 [B<-otherpass> I<arg>]
-[B<-engine> I<id>]
+{- $OpenSSL::safe::opt_engine_synopsis -}
 {- $OpenSSL::safe::opt_provider_synopsis -}
 
 [B<-tls_used>]
@@ -82,6 +83,7 @@ B<openssl> B<cmp>
 [B<-tls_trusted> I<filenames>]
 [B<-tls_host> I<name>]
 
+[B<-verbosity> I<level>]
 [B<-batch>]
 [B<-repeat> I<number>]
 [B<-reqin>] I<filenames>
@@ -335,7 +337,7 @@ is provided via the B<-newkey> or B<-key> options.
 
 =item B<-csr> I<filename>
 
-CSR in PKCS#10 format to use in legacy P10CR messages.
+PKCS#10 CSR in PEM or DER format to use in legacy P10CR messages.
 
 =item B<-out_trusted> I<filenames>
 
@@ -377,6 +379,10 @@ B<WARNING:> This leads to behavior violating RFC 4210.
 =item B<-certout> I<filename>
 
 The file where the newly enrolled certificate should be saved.
+
+=item B<-chainout> I<filename>
+
+The file where the chain of the newly enrolled certificate should be saved.
 
 =back
 
@@ -506,10 +512,11 @@ and as default value for the expected sender of incoming CMP messages.
 =item B<-recipient> I<name>
 
 Distinguished Name (DN) to use in the recipient field of CMP request messages,
-i.e., the CMP server (usually a CA or RA entity).
+i.e., the CMP server (usually the addressed CA).
 
 The argument must be formatted as I</type0=value0/type1=value1/type2=...>,
 characters may be escaped by C<\>E<nbsp>(backslash), no spaces are skipped.
+The empty name (NULL-DN) can be given explicitly as a single slash: 'I</>'.
 
 The recipient field in the header of a CMP message is mandatory.
 If not given explicitly the recipient is determined in the following order:
@@ -611,7 +618,7 @@ B<PASS PHRASE ARGUMENTS> section in L<openssl(1)>.
 
 =item B<-cert> I<filename>
 
-The client's current certificate.
+The client's current CMP signer certificate.
 Requires the corresponding key to be given with B<-key>.
 The subject of this certificate will be used as sender of outgoing CMP messages,
 while the subject of B<-oldcert> or B<-subjectName> may provide fallback values.
@@ -622,6 +629,16 @@ using an external entity certificate as defined in appendix E.7 of RFC 4210.
 For Key Update Request (KUR) messages this is also used as
 the certificate to be updated if the B<-oldcert> option is not given.
 If the file includes further certs, they are appended to the untrusted certs.
+
+=item B<-own_trusted> I<filenames>
+
+If this list of certificates is provided then the chain built for
+the CMP signer certificate given with the B<-cert> option is verified
+using the given certificates as trust anchors.
+
+Multiple filenames may be given, separated by commas and/or whitespace
+(where in the latter case the whole argument must be enclosed in "...").
+Each source may contain multiple certificates.
 
 =item B<-key> I<filename>
 
@@ -680,24 +697,21 @@ Send messages without CMP-level protection.
 File format to use when saving a certificate to a file.
 Default value is PEM.
 
-=item B<-keyform> I<PEM|DER|P12>
+=item B<-keyform> I<PEM|DER|P12|ENGINE>
 
-Format to assume when reading key files.
-Default value is PEM.
-
-=item B<-certsform> I<PEM|DER|P12>
-
-Format to try first when reading multiple certificates from file(s).
-Default value is PEM.
+The format of the key input.
+The only value with effect is B<ENGINE>.
 
 =item B<-otherpass> I<arg>
 
 Pass phrase source for certificate given with the B<-trusted>, B<-untrusted>,
+B<-own_trusted>,
 B<-out_trusted>, B<-extracerts>, B<-tls_extra>, or B<-tls_trusted> options.
 If not given here, the password will be prompted for if needed.
 
 For more information about the format of B<arg> see the
 B<PASS PHRASE ARGUMENTS> section in L<openssl(1)>.
+{- output_off() if $disabled{"deprecated-3.0"}; "" -}
 
 =item B<-engine> I<id>
 
@@ -714,6 +728,7 @@ the engine.
 as supported, e.g., by libp11:
 C<-key engine:pkcs11:object=my-private-key;type=private;pin-value=1234>
 
+{- output_on() if $disabled{"deprecated-3.0"}; "" -}
 {- $OpenSSL::safe::opt_provider_item -}
 
 =back
@@ -772,6 +787,13 @@ If not given it defaults to the B<-server> address.
 =head2 Client-side debugging options
 
 =over 4
+
+=item B<-verbosity> I<level>
+
+Level of verbosity for logging, error output, etc.
+0 = EMERG, 1 = ALERT, 2 = CRIT, 3 = ERR, 4 = WARN, 5 = NOTE,
+6 = INFO, 7 = DEBUG, 8 = TRACE.
+Defaults to 6 = INFO.
 
 =item B<-batch>
 
@@ -857,7 +879,7 @@ Act as CMP HTTP server mock-up listening on the given port.
 =item B<-max_msgs> I<number>
 
 Maximum number of CMP (request) messages the CMP HTTP server mock-up
-should handle, which must be non-negative.
+should handle, which must be nonnegative.
 The default value is 0, which means that no limit is imposed.
 In any case the server terminates on internal errors, but not when it
 detects a CMP-level error that it can successfully answer with an error message.
@@ -988,8 +1010,10 @@ to issue the following shell commands.
 
   cd /path/to/openssl
   export OPENSSL_CONF=openssl.cnf
+=begin comment
   wget 'http://pki.certificate.fi:8080/install-ca-cert.html/ca-certificate.crt\
         ?ca-id=632&download-certificate=1' -O insta.ca.crt
+=end comment
   openssl genrsa -out insta.priv.pem
   openssl cmp -section insta
 
@@ -1045,7 +1069,11 @@ or
 
 Many more options can be used in the configuration file
 and/or on the command line.
+For instance, the B<-reqexts> CLI option may refer to a section in the
+configuration file defining X.509 extensions to use in certificate requests,
+such as B<v3_req> in F<openssl/apps/openssl.cnf>:
 
+  openssl cmp -section insta,cr -reqexts v3_req
 
 =head2 Certificate enrollment
 
@@ -1104,7 +1132,7 @@ This prints information about all received ITAV B<infoType>s to stdout.
 For CMP client invocations, in particular for certificate enrollment,
 usually many parameters need to be set, which is tedious and error-prone to do
 on the command line.
-Therefore the client offers the possibility to read
+Therefore, the client offers the possibility to read
 options from sections of the OpenSSL config file, usually called B<openssl.cnf>.
 The values found there can still be extended and even overridden by any
 subsequently loaded sections and on the command line.

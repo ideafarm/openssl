@@ -11,7 +11,7 @@
 #include <string.h>
 /* For strcasecmp on Windows */
 #include "e_os.h"
-#include <openssl/core_numbers.h>
+#include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/params.h>
 #include <openssl/err.h>
@@ -28,41 +28,42 @@
 # include <openssl/sha.h>   /* For SHA512_DIGEST_LENGTH */
 #endif
 
-static OSSL_OP_keymgmt_new_fn x25519_new_key;
-static OSSL_OP_keymgmt_new_fn x448_new_key;
-static OSSL_OP_keymgmt_new_fn ed25519_new_key;
-static OSSL_OP_keymgmt_new_fn ed448_new_key;
-static OSSL_OP_keymgmt_gen_init_fn x25519_gen_init;
-static OSSL_OP_keymgmt_gen_init_fn x448_gen_init;
-static OSSL_OP_keymgmt_gen_init_fn ed25519_gen_init;
-static OSSL_OP_keymgmt_gen_init_fn ed448_gen_init;
-static OSSL_OP_keymgmt_gen_fn x25519_gen;
-static OSSL_OP_keymgmt_gen_fn x448_gen;
-static OSSL_OP_keymgmt_gen_fn ed25519_gen;
-static OSSL_OP_keymgmt_gen_fn ed448_gen;
-static OSSL_OP_keymgmt_gen_cleanup_fn ecx_gen_cleanup;
-static OSSL_OP_keymgmt_get_params_fn x25519_get_params;
-static OSSL_OP_keymgmt_get_params_fn x448_get_params;
-static OSSL_OP_keymgmt_get_params_fn ed25519_get_params;
-static OSSL_OP_keymgmt_get_params_fn ed448_get_params;
-static OSSL_OP_keymgmt_gettable_params_fn x25519_gettable_params;
-static OSSL_OP_keymgmt_gettable_params_fn x448_gettable_params;
-static OSSL_OP_keymgmt_gettable_params_fn ed25519_gettable_params;
-static OSSL_OP_keymgmt_gettable_params_fn ed448_gettable_params;
-static OSSL_OP_keymgmt_set_params_fn x25519_set_params;
-static OSSL_OP_keymgmt_set_params_fn x448_set_params;
-static OSSL_OP_keymgmt_set_params_fn ed25519_set_params;
-static OSSL_OP_keymgmt_set_params_fn ed448_set_params;
-static OSSL_OP_keymgmt_settable_params_fn x25519_settable_params;
-static OSSL_OP_keymgmt_settable_params_fn x448_settable_params;
-static OSSL_OP_keymgmt_settable_params_fn ed25519_settable_params;
-static OSSL_OP_keymgmt_settable_params_fn ed448_settable_params;
-static OSSL_OP_keymgmt_has_fn ecx_has;
-static OSSL_OP_keymgmt_match_fn ecx_match;
-static OSSL_OP_keymgmt_import_fn ecx_import;
-static OSSL_OP_keymgmt_import_types_fn ecx_imexport_types;
-static OSSL_OP_keymgmt_export_fn ecx_export;
-static OSSL_OP_keymgmt_export_types_fn ecx_imexport_types;
+static OSSL_FUNC_keymgmt_new_fn x25519_new_key;
+static OSSL_FUNC_keymgmt_new_fn x448_new_key;
+static OSSL_FUNC_keymgmt_new_fn ed25519_new_key;
+static OSSL_FUNC_keymgmt_new_fn ed448_new_key;
+static OSSL_FUNC_keymgmt_gen_init_fn x25519_gen_init;
+static OSSL_FUNC_keymgmt_gen_init_fn x448_gen_init;
+static OSSL_FUNC_keymgmt_gen_init_fn ed25519_gen_init;
+static OSSL_FUNC_keymgmt_gen_init_fn ed448_gen_init;
+static OSSL_FUNC_keymgmt_gen_fn x25519_gen;
+static OSSL_FUNC_keymgmt_gen_fn x448_gen;
+static OSSL_FUNC_keymgmt_gen_fn ed25519_gen;
+static OSSL_FUNC_keymgmt_gen_fn ed448_gen;
+static OSSL_FUNC_keymgmt_gen_cleanup_fn ecx_gen_cleanup;
+static OSSL_FUNC_keymgmt_load_fn ecx_load;
+static OSSL_FUNC_keymgmt_get_params_fn x25519_get_params;
+static OSSL_FUNC_keymgmt_get_params_fn x448_get_params;
+static OSSL_FUNC_keymgmt_get_params_fn ed25519_get_params;
+static OSSL_FUNC_keymgmt_get_params_fn ed448_get_params;
+static OSSL_FUNC_keymgmt_gettable_params_fn x25519_gettable_params;
+static OSSL_FUNC_keymgmt_gettable_params_fn x448_gettable_params;
+static OSSL_FUNC_keymgmt_gettable_params_fn ed25519_gettable_params;
+static OSSL_FUNC_keymgmt_gettable_params_fn ed448_gettable_params;
+static OSSL_FUNC_keymgmt_set_params_fn x25519_set_params;
+static OSSL_FUNC_keymgmt_set_params_fn x448_set_params;
+static OSSL_FUNC_keymgmt_set_params_fn ed25519_set_params;
+static OSSL_FUNC_keymgmt_set_params_fn ed448_set_params;
+static OSSL_FUNC_keymgmt_settable_params_fn x25519_settable_params;
+static OSSL_FUNC_keymgmt_settable_params_fn x448_settable_params;
+static OSSL_FUNC_keymgmt_settable_params_fn ed25519_settable_params;
+static OSSL_FUNC_keymgmt_settable_params_fn ed448_settable_params;
+static OSSL_FUNC_keymgmt_has_fn ecx_has;
+static OSSL_FUNC_keymgmt_match_fn ecx_match;
+static OSSL_FUNC_keymgmt_import_fn ecx_import;
+static OSSL_FUNC_keymgmt_import_types_fn ecx_imexport_types;
+static OSSL_FUNC_keymgmt_export_fn ecx_export;
+static OSSL_FUNC_keymgmt_export_types_fn ecx_imexport_types;
 
 #define ECX_POSSIBLE_SELECTIONS (OSSL_KEYMGMT_SELECT_KEYPAIR)
 
@@ -313,22 +314,22 @@ static const OSSL_PARAM ed_gettable_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *x25519_gettable_params(void)
+static const OSSL_PARAM *x25519_gettable_params(void *provctx)
 {
     return ecx_gettable_params;
 }
 
-static const OSSL_PARAM *x448_gettable_params(void)
+static const OSSL_PARAM *x448_gettable_params(void *provctx)
 {
     return ecx_gettable_params;
 }
 
-static const OSSL_PARAM *ed25519_gettable_params(void)
+static const OSSL_PARAM *ed25519_gettable_params(void *provctx)
 {
     return ed_gettable_params;
 }
 
-static const OSSL_PARAM *ed448_gettable_params(void)
+static const OSSL_PARAM *ed448_gettable_params(void *provctx)
 {
     return ed_gettable_params;
 }
@@ -383,22 +384,22 @@ static const OSSL_PARAM ed_settable_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *x25519_settable_params(void)
+static const OSSL_PARAM *x25519_settable_params(void *provctx)
 {
     return ecx_settable_params;
 }
 
-static const OSSL_PARAM *x448_settable_params(void)
+static const OSSL_PARAM *x448_settable_params(void *provctx)
 {
     return ecx_settable_params;
 }
 
-static const OSSL_PARAM *ed25519_settable_params(void)
+static const OSSL_PARAM *ed25519_settable_params(void *provctx)
 {
     return ed_settable_params;
 }
 
-static const OSSL_PARAM *ed448_settable_params(void)
+static const OSSL_PARAM *ed448_settable_params(void *provctx)
 {
     return ed_settable_params;
 }
@@ -589,6 +590,20 @@ static void ecx_gen_cleanup(void *genctx)
     OPENSSL_free(gctx);
 }
 
+void *ecx_load(const void *reference, size_t reference_sz)
+{
+    ECX_KEY *key = NULL;
+
+    if (reference_sz == sizeof(key)) {
+        /* The contents of the reference is the address to our object */
+        key = *(ECX_KEY **)reference;
+        /* We grabbed, so we detach it */
+        *(ECX_KEY **)reference = NULL;
+        return key;
+    }
+    return NULL;
+}
+
 #define MAKE_KEYMGMT_FUNCTIONS(alg) \
     const OSSL_DISPATCH alg##_keymgmt_functions[] = { \
         { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))alg##_new_key }, \
@@ -609,6 +624,7 @@ static void ecx_gen_cleanup(void *genctx)
           (void (*)(void))ecx_gen_settable_params }, \
         { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))alg##_gen }, \
         { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))ecx_gen_cleanup }, \
+        { OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))ecx_load }, \
         { 0, NULL } \
     };
 

@@ -22,6 +22,7 @@
 #include <openssl/asn1t.h>
 #include "crypto/asn1.h"
 #include "crypto/evp.h"
+#include "crypto/x509.h"
 #include <openssl/core_names.h>
 #include "openssl/param_build.h"
 #include "ec_local.h"
@@ -35,6 +36,7 @@ static int eckey_param2type(int *pptype, void **ppval, const EC_KEY *ec_key)
 {
     const EC_GROUP *group;
     int nid;
+
     if (ec_key == NULL || (group = EC_KEY_get0_group(ec_key)) == NULL) {
         ECerr(EC_F_ECKEY_PARAM2TYPE, EC_R_MISSING_PARAMETERS);
         return 0;
@@ -43,7 +45,14 @@ static int eckey_param2type(int *pptype, void **ppval, const EC_KEY *ec_key)
         && (nid = EC_GROUP_get_curve_name(group)))
         /* we have a 'named curve' => just set the OID */
     {
-        *ppval = OBJ_nid2obj(nid);
+        ASN1_OBJECT *asn1obj = OBJ_nid2obj(nid);
+
+        if (asn1obj == NULL || OBJ_length(asn1obj) == 0) {
+            ASN1_OBJECT_free(asn1obj);
+            ECerr(EC_F_ECKEY_PARAM2TYPE, EC_R_MISSING_OID);
+            return 0;
+        }
+        *ppval = asn1obj;
         *pptype = V_ASN1_OBJECT;
     } else {                    /* explicit parameters */
 
@@ -153,12 +162,15 @@ static int eckey_pub_decode(EVP_PKEY *pkey, const X509_PUBKEY *pubkey)
     int ptype, pklen;
     EC_KEY *eckey = NULL;
     X509_ALGOR *palg;
+    OPENSSL_CTX *libctx = NULL;
+    const char *propq = NULL;
 
-    if (!X509_PUBKEY_get0_param(NULL, &p, &pklen, &palg, pubkey))
+    if (!X509_PUBKEY_get0_libctx(&libctx, &propq, pubkey)
+        || !X509_PUBKEY_get0_param(NULL, &p, &pklen, &palg, pubkey))
         return 0;
     X509_ALGOR_get0(NULL, &ptype, &pval, palg);
 
-    eckey = eckey_type2param(ptype, pval, NULL, NULL);
+    eckey = eckey_type2param(ptype, pval, libctx, propq);
 
     if (!eckey) {
         ECerr(EC_F_ECKEY_PUB_DECODE, ERR_R_EC_LIB);
@@ -185,6 +197,7 @@ static int eckey_pub_cmp(const EVP_PKEY *a, const EVP_PKEY *b)
     const EC_GROUP *group = EC_KEY_get0_group(b->pkey.ec);
     const EC_POINT *pa = EC_KEY_get0_public_key(a->pkey.ec),
         *pb = EC_KEY_get0_public_key(b->pkey.ec);
+
     if (group == NULL || pa == NULL || pb == NULL)
         return -2;
     r = EC_POINT_cmp(group, pa, pb, NULL);
@@ -292,6 +305,7 @@ static int ec_bits(const EVP_PKEY *pkey)
 static int ec_security_bits(const EVP_PKEY *pkey)
 {
     int ecbits = ec_bits(pkey);
+
     if (ecbits >= 512)
         return 256;
     if (ecbits >= 384)
@@ -336,6 +350,7 @@ static int ec_cmp_parameters(const EVP_PKEY *a, const EVP_PKEY *b)
 {
     const EC_GROUP *group_a = EC_KEY_get0_group(a->pkey.ec),
         *group_b = EC_KEY_get0_group(b->pkey.ec);
+
     if (group_a == NULL || group_b == NULL)
         return -2;
     if (EC_GROUP_cmp(group_a, group_b, NULL))
@@ -479,6 +494,7 @@ static int ec_pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2)
         if (arg1 == 0) {
             int snid, hnid;
             X509_ALGOR *alg1, *alg2;
+
             PKCS7_SIGNER_INFO_get0_algs(arg2, NULL, &alg1, &alg2);
             if (alg1 == NULL || alg1->algorithm == NULL)
                 return -1;
@@ -590,42 +606,6 @@ size_t ec_pkey_dirty_cnt(const EVP_PKEY *pkey)
     return pkey->pkey.ec->dirty_cnt;
 }
 
-static ossl_inline
-int ecparams_to_params(const EC_KEY *eckey, OSSL_PARAM_BLD *tmpl)
-{
-    const EC_GROUP *ecg;
-    int curve_nid;
-
-    if (eckey == NULL)
-        return 0;
-
-    ecg = EC_KEY_get0_group(eckey);
-    if (ecg == NULL)
-        return 0;
-
-    curve_nid = EC_GROUP_get_curve_name(ecg);
-
-    if (curve_nid == NID_undef) {
-        /* explicit parameters */
-
-        /*
-         * TODO(3.0): should we support explicit parameters curves?
-         */
-        return 0;
-    } else {
-        /* named curve */
-        const char *curve_name = NULL;
-
-        if ((curve_name = OBJ_nid2sn(curve_nid)) == NULL)
-            return 0;
-
-        if (!OSSL_PARAM_BLD_push_utf8_string(tmpl, OSSL_PKEY_PARAM_GROUP_NAME, curve_name, 0))
-            return 0;
-    }
-
-    return 1;
-}
-
 static
 int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
                       EVP_KEYMGMT *to_keymgmt, OPENSSL_CTX *libctx,
@@ -633,7 +613,7 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
 {
     const EC_KEY *eckey = NULL;
     const EC_GROUP *ecg = NULL;
-    unsigned char *pub_key_buf = NULL;
+    unsigned char *pub_key_buf = NULL, *gen_buf = NULL;
     size_t pub_key_buflen;
     OSSL_PARAM_BLD *tmpl;
     OSSL_PARAM *params = NULL;
@@ -659,8 +639,17 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
     if (tmpl == NULL)
         return 0;
 
+    /*
+     * EC_POINT_point2buf() can generate random numbers in some
+     * implementations so we need to ensure we use the correct libctx.
+     */
+    bnctx = BN_CTX_new_ex(libctx);
+    if (bnctx == NULL)
+        goto err;
+    BN_CTX_start(bnctx);
+
     /* export the domain parameters */
-    if (!ecparams_to_params(eckey, tmpl))
+    if (!ec_group_todata(ecg, tmpl, NULL, libctx, propq, bnctx, &gen_buf))
         goto err;
     selection |= OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS;
 
@@ -668,14 +657,6 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
     pub_point = EC_KEY_get0_public_key(eckey);
 
     if (pub_point != NULL) {
-        /*
-         * EC_POINT_point2buf() can generate random numbers in some
-         * implementations so we need to ensure we use the correct libctx.
-         */
-        bnctx = BN_CTX_new_ex(libctx);
-        if (bnctx == NULL)
-            goto err;
-
         /* convert pub_point to a octet string according to the SECG standard */
         if ((pub_key_buflen = EC_POINT_point2buf(ecg, pub_point,
                                                  POINT_CONVERSION_COMPRESSED,
@@ -762,6 +743,8 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
     OSSL_PARAM_BLD_free(tmpl);
     OSSL_PARAM_BLD_free_params(params);
     OPENSSL_free(pub_key_buf);
+    OPENSSL_free(gen_buf);
+    BN_CTX_end(bnctx);
     BN_CTX_free(bnctx);
     return rv;
 }
@@ -777,7 +760,7 @@ static int ec_pkey_import_from(const OSSL_PARAM params[], void *vpctx)
         return 0;
     }
 
-    if (!ec_key_domparams_fromdata(ec, params)
+    if (!ec_group_fromdata(ec, params)
         || !ec_key_otherparams_fromdata(ec, params)
         || !ec_key_fromdata(ec, params, 1)
         || !EVP_PKEY_assign_EC_KEY(pkey, ec)) {
@@ -871,6 +854,7 @@ static int ecdh_cms_set_peerkey(EVP_PKEY_CTX *pctx,
     EC_KEY *ecpeer = NULL;
     const unsigned char *p;
     int plen;
+
     X509_ALGOR_get0(&aoid, &atype, &aval, alg);
     if (OBJ_obj2nid(aoid) != NID_X9_62_id_ecPublicKey)
         goto err;
@@ -954,8 +938,9 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
     const unsigned char *p;
     unsigned char *der = NULL;
     int plen, keylen;
-    const EVP_CIPHER *kekcipher;
+    EVP_CIPHER *kekcipher = NULL;
     EVP_CIPHER_CTX *kekctx;
+    const char *name;
 
     if (!CMS_RecipientInfo_kari_get0_alg(ri, &alg, &ukm))
         return 0;
@@ -971,13 +956,14 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
     p = alg->parameter->value.sequence->data;
     plen = alg->parameter->value.sequence->length;
     kekalg = d2i_X509_ALGOR(NULL, &p, plen);
-    if (!kekalg)
+    if (kekalg == NULL)
         goto err;
     kekctx = CMS_RecipientInfo_kari_get0_ctx(ri);
-    if (!kekctx)
+    if (kekctx == NULL)
         goto err;
-    kekcipher = EVP_get_cipherbyobj(kekalg->algorithm);
-    if (!kekcipher || EVP_CIPHER_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
+    name = OBJ_nid2sn(OBJ_obj2nid(kekalg->algorithm));
+    kekcipher = EVP_CIPHER_fetch(pctx->libctx, name, NULL);
+    if (kekcipher == NULL || EVP_CIPHER_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
         goto err;
     if (!EVP_EncryptInit_ex(kekctx, kekcipher, NULL, NULL, NULL))
         goto err;
@@ -990,7 +976,7 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
 
     plen = CMS_SharedInfo_encode(&der, kekalg, ukm, keylen);
 
-    if (!plen)
+    if (plen <= 0)
         goto err;
 
     if (EVP_PKEY_CTX_set0_ecdh_kdf_ukm(pctx, der, plen) <= 0)
@@ -999,6 +985,7 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
 
     rv = 1;
  err:
+    EVP_CIPHER_free(kekcipher);
     X509_ALGOR_free(kekalg);
     OPENSSL_free(der);
     return rv;
@@ -1007,13 +994,15 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
 static int ecdh_cms_decrypt(CMS_RecipientInfo *ri)
 {
     EVP_PKEY_CTX *pctx;
+
     pctx = CMS_RecipientInfo_get0_pkey_ctx(ri);
-    if (!pctx)
+    if (pctx == NULL)
         return 0;
     /* See if we need to set peer key */
     if (!EVP_PKEY_CTX_get0_peerkey(pctx)) {
         X509_ALGOR *alg;
         ASN1_BIT_STRING *pubkey;
+
         if (!CMS_RecipientInfo_kari_get0_orig_id(ri, &alg, &pubkey,
                                                  NULL, NULL, NULL))
             return 0;
@@ -1048,8 +1037,9 @@ static int ecdh_cms_encrypt(CMS_RecipientInfo *ri)
     int rv = 0;
     int ecdh_nid, kdf_type, kdf_nid, wrap_nid;
     const EVP_MD *kdf_md;
+
     pctx = CMS_RecipientInfo_get0_pkey_ctx(ri);
-    if (!pctx)
+    if (pctx == NULL)
         return 0;
     /* Get ephemeral key */
     pkey = EVP_PKEY_CTX_get0_pkey(pctx);

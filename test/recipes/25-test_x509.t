@@ -16,7 +16,7 @@ use OpenSSL::Test qw/:DEFAULT srctop_file/;
 
 setup("test_x509");
 
-plan tests => 11;
+plan tests => 12;
 
 require_ok(srctop_file('test','recipes','tconversion.pl'));
 
@@ -35,12 +35,24 @@ ok(run(app(["openssl", "x509", "-text", "-in", $pem, "-out", $out_utf8,
 is(cmp_text($out_utf8, srctop_file("test/certs", "cyrillic.utf8")),
    0, 'Comparing utf8 output');
 
+ SKIP: {
+    skip "DES disabled", 1 if disabled("des");
+
+    my $p12 = srctop_file("test", "shibboleth.pfx");
+    my $p12pass = "σύνθημα γνώρισμα";
+    my $out_pem = "out.pem";
+    ok(run(app(["openssl", "x509", "-text", "-in", $p12, "-out", $out_pem,
+                "-passin", "pass:$p12pass"])));
+    unlink $out_pem;
+}
+
 SKIP: {
     skip "EC disabled", 1 if disabled("ec");
 
     # producing and checking self-issued (but not self-signed) cert
     my @path = qw(test certs);
     my $subj = "/CN=CA"; # using same DN as in issuer of ee-cert.pem
+    my $extfile = srctop_file("test", "v3_ca_exts.cnf");
     my $pkey = srctop_file(@path, "ca-key.pem"); #  issuer private key
     my $pubkey = "ca-pubkey.pem"; # the corresponding issuer public key
     # use any (different) key for signing our self-issued cert:
@@ -50,10 +62,13 @@ SKIP: {
     ok(run(app(["openssl", "pkey", "-in", $pkey, "-pubout", "-out", $pubkey]))
        &&
        run(app(["openssl", "x509", "-new", "-force_pubkey", $pubkey,
-                "-subj", $subj, "-signkey", $signkey, "-out", $selfout]))
+                "-subj", $subj, "-extfile", $extfile,
+                "-signkey", $signkey, "-out", $selfout]))
        &&
        run(app(["openssl", "verify", "-no_check_time",
-                "-trusted", $selfout, $testcert])));
+                "-trusted", $selfout, "-partial_chain", $testcert])));
+    unlink $pubkey;
+    unlink $selfout;
 }
 
 subtest 'x509 -- x.509 v1 certificate' => sub {

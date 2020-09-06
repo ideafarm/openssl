@@ -13,7 +13,7 @@
  */
 #include "internal/deprecated.h"
 
-#include <openssl/core_numbers.h>
+#include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
@@ -23,28 +23,30 @@
 #include "prov/providercommon.h"
 #include "prov/provider_ctx.h"
 #include "crypto/rsa.h"
+#include "crypto/cryptlib.h"
 #include "internal/param_build_set.h"
 
-static OSSL_OP_keymgmt_new_fn rsa_newdata;
-static OSSL_OP_keymgmt_new_fn rsapss_newdata;
-static OSSL_OP_keymgmt_gen_init_fn rsa_gen_init;
-static OSSL_OP_keymgmt_gen_init_fn rsapss_gen_init;
-static OSSL_OP_keymgmt_gen_set_params_fn rsa_gen_set_params;
-static OSSL_OP_keymgmt_gen_settable_params_fn rsa_gen_settable_params;
-static OSSL_OP_keymgmt_gen_settable_params_fn rsapss_gen_settable_params;
-static OSSL_OP_keymgmt_gen_fn rsa_gen;
-static OSSL_OP_keymgmt_gen_cleanup_fn rsa_gen_cleanup;
-static OSSL_OP_keymgmt_free_fn rsa_freedata;
-static OSSL_OP_keymgmt_get_params_fn rsa_get_params;
-static OSSL_OP_keymgmt_gettable_params_fn rsa_gettable_params;
-static OSSL_OP_keymgmt_has_fn rsa_has;
-static OSSL_OP_keymgmt_match_fn rsa_match;
-static OSSL_OP_keymgmt_validate_fn rsa_validate;
-static OSSL_OP_keymgmt_import_fn rsa_import;
-static OSSL_OP_keymgmt_import_types_fn rsa_import_types;
-static OSSL_OP_keymgmt_export_fn rsa_export;
-static OSSL_OP_keymgmt_export_types_fn rsa_export_types;
-static OSSL_OP_keymgmt_query_operation_name_fn rsapss_query_operation_name;
+static OSSL_FUNC_keymgmt_new_fn rsa_newdata;
+static OSSL_FUNC_keymgmt_new_fn rsapss_newdata;
+static OSSL_FUNC_keymgmt_gen_init_fn rsa_gen_init;
+static OSSL_FUNC_keymgmt_gen_init_fn rsapss_gen_init;
+static OSSL_FUNC_keymgmt_gen_set_params_fn rsa_gen_set_params;
+static OSSL_FUNC_keymgmt_gen_settable_params_fn rsa_gen_settable_params;
+static OSSL_FUNC_keymgmt_gen_settable_params_fn rsapss_gen_settable_params;
+static OSSL_FUNC_keymgmt_gen_fn rsa_gen;
+static OSSL_FUNC_keymgmt_gen_cleanup_fn rsa_gen_cleanup;
+static OSSL_FUNC_keymgmt_load_fn rsa_load;
+static OSSL_FUNC_keymgmt_free_fn rsa_freedata;
+static OSSL_FUNC_keymgmt_get_params_fn rsa_get_params;
+static OSSL_FUNC_keymgmt_gettable_params_fn rsa_gettable_params;
+static OSSL_FUNC_keymgmt_has_fn rsa_has;
+static OSSL_FUNC_keymgmt_match_fn rsa_match;
+static OSSL_FUNC_keymgmt_validate_fn rsa_validate;
+static OSSL_FUNC_keymgmt_import_fn rsa_import;
+static OSSL_FUNC_keymgmt_import_types_fn rsa_import_types;
+static OSSL_FUNC_keymgmt_export_fn rsa_export;
+static OSSL_FUNC_keymgmt_export_types_fn rsa_export_types;
+static OSSL_FUNC_keymgmt_query_operation_name_fn rsapss_query_operation_name;
 
 #define RSA_DEFAULT_MD "SHA256"
 #define RSA_PSS_DEFAULT_MD OSSL_DIGEST_NAME_SHA1
@@ -339,7 +341,7 @@ static const OSSL_PARAM rsa_params[] = {
     OSSL_PARAM_END
 };
 
-static const OSSL_PARAM *rsa_gettable_params(void)
+static const OSSL_PARAM *rsa_gettable_params(void *provctx)
 {
     return rsa_params;
 }
@@ -575,6 +577,20 @@ static void rsa_gen_cleanup(void *genctx)
     OPENSSL_free(gctx);
 }
 
+void *rsa_load(const void *reference, size_t reference_sz)
+{
+    RSA *rsa = NULL;
+
+    if (reference_sz == sizeof(rsa)) {
+        /* The contents of the reference is the address to our object */
+        rsa = *(RSA **)reference;
+        /* We grabbed, so we detach it */
+        *(RSA **)reference = NULL;
+        return rsa;
+    }
+    return NULL;
+}
+
 /* For any RSA key, we use the "RSA" algorithms regardless of sub-type. */
 static const char *rsapss_query_operation_name(int operation_id)
 {
@@ -590,6 +606,7 @@ const OSSL_DISPATCH rsa_keymgmt_functions[] = {
       (void (*)(void))rsa_gen_settable_params },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))rsa_gen },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))rsa_gen_cleanup },
+    { OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))rsa_load },
     { OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))rsa_freedata },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*) (void))rsa_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*) (void))rsa_gettable_params },
@@ -611,10 +628,12 @@ const OSSL_DISPATCH rsapss_keymgmt_functions[] = {
       (void (*)(void))rsapss_gen_settable_params },
     { OSSL_FUNC_KEYMGMT_GEN, (void (*)(void))rsa_gen },
     { OSSL_FUNC_KEYMGMT_GEN_CLEANUP, (void (*)(void))rsa_gen_cleanup },
+    { OSSL_FUNC_KEYMGMT_LOAD, (void (*)(void))rsa_load },
     { OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))rsa_freedata },
     { OSSL_FUNC_KEYMGMT_GET_PARAMS, (void (*) (void))rsa_get_params },
     { OSSL_FUNC_KEYMGMT_GETTABLE_PARAMS, (void (*) (void))rsa_gettable_params },
     { OSSL_FUNC_KEYMGMT_HAS, (void (*)(void))rsa_has },
+    { OSSL_FUNC_KEYMGMT_MATCH, (void (*)(void))rsa_match },
     { OSSL_FUNC_KEYMGMT_VALIDATE, (void (*)(void))rsa_validate },
     { OSSL_FUNC_KEYMGMT_IMPORT, (void (*)(void))rsa_import },
     { OSSL_FUNC_KEYMGMT_IMPORT_TYPES, (void (*)(void))rsa_import_types },

@@ -66,7 +66,7 @@ int ffc_params_FIPS186_2_validate(OPENSSL_CTX *libctx, const FFC_PARAMS *params,
 {
     size_t L, N;
 
-    if (params->p == NULL || params->q == NULL) {
+    if (params == NULL || params->p == NULL || params->q == NULL) {
         *res = FFC_CHECK_INVALID_PQ;
         return FFC_PARAM_RET_STATUS_FAILED;
     }
@@ -77,4 +77,35 @@ int ffc_params_FIPS186_2_validate(OPENSSL_CTX *libctx, const FFC_PARAMS *params,
     return ffc_params_FIPS186_2_gen_verify(libctx, (FFC_PARAMS *)params,
                                            FFC_PARAM_MODE_VERIFY, type,
                                            L, N, res, cb);
+}
+
+/*
+ * This does a simple check of L and N and partial g.
+ * It makes no attempt to do a full validation of p, q or g since these require
+ * extra parameters such as the digest and seed, which may not be available for
+ * this test.
+ */
+int ffc_params_simple_validate(OPENSSL_CTX *libctx, FFC_PARAMS *params, int type)
+{
+    int ret, res = 0;
+    int save_gindex;
+    unsigned int save_flags;
+
+    if (params == NULL)
+        return 0;
+
+    save_flags = params->flags;
+    save_gindex = params->gindex;
+    params->flags = FFC_PARAM_FLAG_VALIDATE_G;
+    params->gindex = FFC_UNVERIFIABLE_GINDEX;
+
+#ifndef FIPS_MODULE
+    if (save_flags & FFC_PARAM_FLAG_VALIDATE_LEGACY)
+        ret = ffc_params_FIPS186_2_validate(libctx, params, type, &res, NULL);
+    else
+#endif
+        ret = ffc_params_FIPS186_4_validate(libctx, params, type, &res, NULL);
+    params->flags = save_flags;
+    params->gindex = save_gindex;
+    return ret != FFC_PARAM_RET_STATUS_FAILED;
 }
