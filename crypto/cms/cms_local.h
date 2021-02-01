@@ -29,6 +29,7 @@ typedef struct CMS_EnvelopedData_st CMS_EnvelopedData;
 typedef struct CMS_DigestedData_st CMS_DigestedData;
 typedef struct CMS_EncryptedData_st CMS_EncryptedData;
 typedef struct CMS_AuthenticatedData_st CMS_AuthenticatedData;
+typedef struct CMS_AuthEnvelopedData_st CMS_AuthEnvelopedData;
 typedef struct CMS_CompressedData_st CMS_CompressedData;
 typedef struct CMS_OtherCertificateFormat_st CMS_OtherCertificateFormat;
 typedef struct CMS_KeyTransRecipientInfo_st CMS_KeyTransRecipientInfo;
@@ -46,7 +47,7 @@ typedef struct CMS_ReceiptsFrom_st CMS_ReceiptsFrom;
 typedef struct CMS_CTX_st CMS_CTX;
 
 struct CMS_CTX_st {
-    OPENSSL_CTX *libctx;
+    OSSL_LIB_CTX *libctx;
     char *propq;
 };
 
@@ -58,6 +59,7 @@ struct CMS_ContentInfo_st {
         CMS_EnvelopedData *envelopedData;
         CMS_DigestedData *digestedData;
         CMS_EncryptedData *encryptedData;
+        CMS_AuthEnvelopedData *authEnvelopedData;
         CMS_AuthenticatedData *authenticatedData;
         CMS_CompressedData *compressedData;
         ASN1_TYPE *other;
@@ -127,10 +129,12 @@ struct CMS_EncryptedContentInfo_st {
     ASN1_OBJECT *contentType;
     X509_ALGOR *contentEncryptionAlgorithm;
     ASN1_OCTET_STRING *encryptedContent;
-    /* Content encryption algorithm and key */
+    /* Content encryption algorithm, key and tag */
     const EVP_CIPHER *cipher;
     unsigned char *key;
     size_t keylen;
+    unsigned char *tag;
+    size_t taglen;
     /* Set to 1 if we are debugging decrypt and don't fake keys for MMA */
     int debug;
     /* Set to 1 if we have no cert and need extra safety measures for MMA */
@@ -269,6 +273,16 @@ struct CMS_AuthenticatedData_st {
     STACK_OF(X509_ATTRIBUTE) *unauthAttrs;
 };
 
+struct CMS_AuthEnvelopedData_st {
+    int32_t version;
+    CMS_OriginatorInfo *originatorInfo;
+    STACK_OF(CMS_RecipientInfo) *recipientInfos;
+    CMS_EncryptedContentInfo *authEncryptedContentInfo;
+    STACK_OF(X509_ATTRIBUTE) *authAttrs;
+    ASN1_OCTET_STRING *mac;
+    STACK_OF(X509_ATTRIBUTE) *unauthAttrs;
+};
+
 struct CMS_CompressedData_st {
     int32_t version;
     X509_ALGOR *compressionAlgorithm;
@@ -376,16 +390,18 @@ DECLARE_ASN1_ALLOC_FUNCTIONS(CMS_IssuerAndSerialNumber)
 
 BIO *cms_content_bio(CMS_ContentInfo *cms);
 const CMS_CTX *cms_get0_cmsctx(const CMS_ContentInfo *cms);
-OPENSSL_CTX *cms_ctx_get0_libctx(const CMS_CTX *ctx);
+OSSL_LIB_CTX *cms_ctx_get0_libctx(const CMS_CTX *ctx);
 const char *cms_ctx_get0_propq(const CMS_CTX *ctx);
 void cms_resolve_libctx(CMS_ContentInfo *ci);
 
-CMS_ContentInfo *cms_Data_create(OPENSSL_CTX *ctx, const char *propq);
+CMS_ContentInfo *cms_Data_create(OSSL_LIB_CTX *ctx, const char *propq);
 
 CMS_ContentInfo *cms_DigestedData_create(const EVP_MD *md,
-                                         OPENSSL_CTX *libctx, const char *propq);
+                                         OSSL_LIB_CTX *libctx,
+                                         const char *propq);
 BIO *cms_DigestedData_init_bio(const CMS_ContentInfo *cms);
-int cms_DigestedData_do_final(const CMS_ContentInfo *cms, BIO *chain, int verify);
+int cms_DigestedData_do_final(const CMS_ContentInfo *cms,
+                              BIO *chain, int verify);
 
 BIO *cms_SignedData_init_bio(CMS_ContentInfo *cms);
 int cms_SignedData_final(CMS_ContentInfo *cms, BIO *chain);
@@ -397,7 +413,7 @@ int cms_SignerIdentifier_get0_signer_id(CMS_SignerIdentifier *sid,
                                         ASN1_INTEGER **sno);
 int cms_SignerIdentifier_cert_cmp(CMS_SignerIdentifier *sid, X509 *cert);
 
-CMS_ContentInfo *cms_CompressedData_create(int comp_nid, OPENSSL_CTX *libctx,
+CMS_ContentInfo *cms_CompressedData_create(int comp_nid, OSSL_LIB_CTX *libctx,
                                            const char *propq);
 BIO *cms_CompressedData_init_bio(const CMS_ContentInfo *cms);
 
@@ -425,7 +441,11 @@ ASN1_OCTET_STRING *cms_encode_Receipt(CMS_SignerInfo *si);
 
 BIO *cms_EnvelopedData_init_bio(CMS_ContentInfo *cms);
 int cms_EnvelopedData_final(CMS_ContentInfo *cms, BIO *chain);
+BIO *cms_AuthEnvelopedData_init_bio(CMS_ContentInfo *cms);
+int cms_AuthEnvelopedData_final(CMS_ContentInfo *cms, BIO *cmsbio);
 CMS_EnvelopedData *cms_get0_enveloped(CMS_ContentInfo *cms);
+CMS_AuthEnvelopedData *cms_get0_auth_enveloped(CMS_ContentInfo *cms);
+CMS_EncryptedContentInfo* cms_get0_env_enc_content(const CMS_ContentInfo *cms);
 
 /* RecipientInfo routines */
 int cms_env_asn1_ctrl(CMS_RecipientInfo *ri, int cmd);
@@ -453,10 +473,17 @@ void cms_SignerInfos_set_cmsctx(CMS_ContentInfo *cms);
 /* ESS routines */
 int ess_check_signing_certs(CMS_SignerInfo *si, STACK_OF(X509) *chain);
 
+int cms_dh_envelope(CMS_RecipientInfo *ri, int decrypt);
+int cms_ecdh_envelope(CMS_RecipientInfo *ri, int decrypt);
+int cms_rsa_envelope(CMS_RecipientInfo *ri, int decrypt);
+int cms_ecdsa_dsa_sign(CMS_SignerInfo *si, int verify);
+int cms_rsa_sign(CMS_SignerInfo *si, int verify);
+
 DECLARE_ASN1_ITEM(CMS_CertificateChoices)
 DECLARE_ASN1_ITEM(CMS_DigestedData)
 DECLARE_ASN1_ITEM(CMS_EncryptedData)
 DECLARE_ASN1_ITEM(CMS_EnvelopedData)
+DECLARE_ASN1_ITEM(CMS_AuthEnvelopedData)
 DECLARE_ASN1_ITEM(CMS_KEKRecipientInfo)
 DECLARE_ASN1_ITEM(CMS_KeyAgreeRecipientInfo)
 DECLARE_ASN1_ITEM(CMS_KeyTransRecipientInfo)

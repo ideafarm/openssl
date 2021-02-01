@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -24,8 +24,9 @@
 #include <openssl/params.h>
 #include <openssl/decoder.h>
 #include <openssl/store.h>       /* The OSSL_STORE_INFO type numbers */
+#include "internal/cryptlib.h"
 #include "internal/o_dir.h"
-#include "internal/pem.h"        /* For PVK and "blob" PEM headers */
+#include "crypto/pem.h"          /* For PVK and "blob" PEM headers */
 #include "crypto/decoder.h"
 #include "prov/implementations.h"
 #include "prov/bio.h"
@@ -33,7 +34,6 @@
 #include "prov/providercommonerr.h"
 #include "file_store_local.h"
 
-DEFINE_STACK_OF(X509)
 DEFINE_STACK_OF(OSSL_STORE_INFO)
 
 #ifdef _WIN32
@@ -471,6 +471,7 @@ static int file_set_ctx_params(void *loaderctx, const OSSL_PARAM params[])
         size_t der_len = 0;
         X509_NAME *x509_name;
         unsigned long hash;
+        int ok;
 
         if (ctx->type != IS_DIR) {
             ERR_raise(ERR_LIB_PROV,
@@ -481,10 +482,14 @@ static int file_set_ctx_params(void *loaderctx, const OSSL_PARAM params[])
         if (!OSSL_PARAM_get_octet_string_ptr(p, (const void **)&der, &der_len)
             || (x509_name = d2i_X509_NAME(NULL, &der, der_len)) == NULL)
             return 0;
-        hash = X509_NAME_hash(x509_name);
+        hash = X509_NAME_hash_ex(x509_name,
+                                 ossl_prov_ctx_get0_libctx(ctx->provctx), NULL,
+                                 &ok);
         BIO_snprintf(ctx->_.dir.search_name, sizeof(ctx->_.dir.search_name),
                      "%08lx", hash);
         X509_NAME_free(x509_name);
+        if (ok == 0)
+            return 0;
     }
     return 1;
 }
@@ -531,7 +536,7 @@ void file_load_cleanup(void *construct_data)
 static int file_setup_decoders(struct file_ctx_st *ctx)
 {
     EVP_PKEY *dummy; /* for OSSL_DECODER_CTX_new_by_EVP_PKEY() */
-    OPENSSL_CTX *libctx = PROV_CTX_get0_library_context(ctx->provctx);
+    OSSL_LIB_CTX *libctx = ossl_prov_ctx_get0_libctx(ctx->provctx);
     OSSL_DECODER *to_obj = NULL; /* Last resort decoder */
     OSSL_DECODER_INSTANCE *to_obj_inst = NULL;
     OSSL_DECODER_CLEANUP *old_cleanup = NULL;
@@ -558,7 +563,8 @@ static int file_setup_decoders(struct file_ctx_st *ctx)
          * The decoder doesn't need any identification or to be attached to
          * any provider, since it's only used locally.
          */
-        to_obj = ossl_decoder_from_dispatch(0, &der_to_obj_algorithm, NULL);
+        to_obj = ossl_decoder_from_dispatch(0, &ossl_der_to_obj_algorithm,
+                                            NULL);
         if (to_obj == NULL)
             goto err;
         to_obj_inst = ossl_decoder_instance_new(to_obj, ctx->provctx);
@@ -582,7 +588,8 @@ static int file_setup_decoders(struct file_ctx_st *ctx)
          * Since we're setting up our own constructor, we don't need to care
          * more than that...
          */
-        if (!ossl_decoder_ctx_setup_for_EVP_PKEY(ctx->_.file.decoderctx, &dummy,
+        if (!ossl_decoder_ctx_setup_for_EVP_PKEY(ctx->_.file.decoderctx,
+                                                 &dummy, NULL,
                                                  libctx, ctx->_.file.propq)
             || !OSSL_DECODER_CTX_add_extra(ctx->_.file.decoderctx,
                                            libctx, ctx->_.file.propq)) {
@@ -646,27 +653,13 @@ static int file_load_file(struct file_ctx_st *ctx,
  *  --------------------------------------
  */
 
-static int ends_with_dirsep(const char *uri)
-{
-    if (*uri != '\0')
-        uri += strlen(uri) - 1;
-#if defined(__VMS)
-    if (*uri == ']' || *uri == '>' || *uri == ':')
-        return 1;
-#elif defined(_WIN32)
-    if (*uri == '\\')
-        return 1;
-#endif
-    return *uri == '/';
-}
-
 static char *file_name_to_uri(struct file_ctx_st *ctx, const char *name)
 {
     char *data = NULL;
 
     assert(name != NULL);
     {
-        const char *pathsep = ends_with_dirsep(ctx->uri) ? "" : "/";
+        const char *pathsep = ossl_ends_with_dirsep(ctx->uri) ? "" : "/";
         long calculated_length = strlen(ctx->uri) + strlen(pathsep)
             + strlen(name) + 1 /* \0 */;
 
@@ -907,7 +900,7 @@ static int file_close(void *loaderctx)
     return 1;
 }
 
-const OSSL_DISPATCH file_store_functions[] = {
+const OSSL_DISPATCH ossl_file_store_functions[] = {
     { OSSL_FUNC_STORE_OPEN, (void (*)(void))file_open },
     { OSSL_FUNC_STORE_ATTACH, (void (*)(void))file_attach },
     { OSSL_FUNC_STORE_SETTABLE_CTX_PARAMS,

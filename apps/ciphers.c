@@ -15,8 +15,6 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
-DEFINE_STACK_OF_CONST(SSL_CIPHER)
-
 typedef enum OPTION_choice {
     OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
     OPT_STDNAME,
@@ -178,11 +176,12 @@ int ciphers_main(int argc, char **argv)
             break;
         }
     }
+
+    /* Optional arg is cipher name. */
     argv = opt_rest();
     argc = opt_num_rest();
-
     if (argc == 1)
-        ciphers = *argv;
+        ciphers = argv[0];
     else if (argc != 0)
         goto opthelp;
 

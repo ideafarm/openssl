@@ -18,8 +18,6 @@
 #include "fuzzer.h"
 #include "rand.inc"
 
-DEFINE_STACK_OF(OSSL_CMP_ITAV)
-
 int FuzzerInitialize(int *argc, char ***argv)
 {
     OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
@@ -111,7 +109,7 @@ static OSSL_CMP_PKISI *process_cert_request(OSSL_CMP_SRV_CTX *srv_ctx,
                                             STACK_OF(X509) **chainOut,
                                             STACK_OF(X509) **caPubs)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
     return NULL;
 }
 
@@ -120,7 +118,7 @@ static OSSL_CMP_PKISI *process_rr(OSSL_CMP_SRV_CTX *srv_ctx,
                                   const X509_NAME *issuer,
                                   const ASN1_INTEGER *serial)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
     return NULL;
 }
 
@@ -129,7 +127,7 @@ static int process_genm(OSSL_CMP_SRV_CTX *srv_ctx,
                         const STACK_OF(OSSL_CMP_ITAV) *in,
                         STACK_OF(OSSL_CMP_ITAV) **out)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
     return 0;
 }
 
@@ -138,7 +136,7 @@ static void process_error(OSSL_CMP_SRV_CTX *srv_ctx, const OSSL_CMP_MSG *error,
                           const ASN1_INTEGER *errorCode,
                           const OSSL_CMP_PKIFREETEXT *errorDetails)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
 }
 
 static int process_certConf(OSSL_CMP_SRV_CTX *srv_ctx,
@@ -146,7 +144,7 @@ static int process_certConf(OSSL_CMP_SRV_CTX *srv_ctx,
                             const ASN1_OCTET_STRING *certHash,
                             const OSSL_CMP_PKISI *si)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
     return 0;
 }
 
@@ -154,7 +152,7 @@ static int process_pollReq(OSSL_CMP_SRV_CTX *srv_ctx,
                            const OSSL_CMP_MSG *pollReq, int certReqId,
                            OSSL_CMP_MSG **certReq, int64_t *check_after)
 {
-    CMPerr(0, CMP_R_ERROR_PROCESSING_MESSAGE);
+    ERR_raise(ERR_LIB_CMP, CMP_R_ERROR_PROCESSING_MESSAGE);
     return 0;
 }
 

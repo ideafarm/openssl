@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,11 +15,6 @@
 #include "crypto/x509.h"
 #include "internal/tsan_assist.h"
 #include "x509_local.h"
-
-DEFINE_STACK_OF(GENERAL_NAME)
-DEFINE_STACK_OF(DIST_POINT)
-DEFINE_STACK_OF(X509_PURPOSE)
-DEFINE_STACK_OF(ASN1_OBJECT)
 
 static int check_ssl_ca(const X509 *x);
 static int check_purpose_ssl_client(const X509_PURPOSE *xp, const X509 *x,
@@ -100,7 +95,7 @@ int X509_check_purpose(X509 *x, int id, int ca)
 int X509_PURPOSE_set(int *p, int purpose)
 {
     if (X509_PURPOSE_get_by_id(purpose) == -1) {
-        X509V3err(X509V3_F_X509_PURPOSE_SET, X509V3_R_INVALID_PURPOSE);
+        ERR_raise(ERR_LIB_X509V3, X509V3_R_INVALID_PURPOSE);
         return 0;
     }
     *p = purpose;
@@ -168,7 +163,7 @@ int X509_PURPOSE_add(int id, int trust, int flags,
     /* Need a new entry */
     if (idx == -1) {
         if ((ptmp = OPENSSL_malloc(sizeof(*ptmp))) == NULL) {
-            X509V3err(X509V3_F_X509_PURPOSE_ADD, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
             return 0;
         }
         ptmp->flags = X509_PURPOSE_DYNAMIC;
@@ -184,7 +179,7 @@ int X509_PURPOSE_add(int id, int trust, int flags,
     ptmp->name = OPENSSL_strdup(name);
     ptmp->sname = OPENSSL_strdup(sname);
     if (ptmp->name == NULL|| ptmp->sname == NULL) {
-        X509V3err(X509V3_F_X509_PURPOSE_ADD, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
         goto err;
     }
     /* Keep the dynamic flag of existing entry */
@@ -201,11 +196,11 @@ int X509_PURPOSE_add(int id, int trust, int flags,
     if (idx == -1) {
         if (xptable == NULL
             && (xptable = sk_X509_PURPOSE_new(xp_cmp)) == NULL) {
-            X509V3err(X509V3_F_X509_PURPOSE_ADD, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
             goto err;
         }
         if (!sk_X509_PURPOSE_push(xptable, ptmp)) {
-            X509V3err(X509V3_F_X509_PURPOSE_ADD, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
             goto err;
         }
     }
@@ -288,6 +283,7 @@ int X509_supported_extension(X509_EXTENSION *ex)
         NID_sbgp_ipAddrBlock,   /* 290 */
         NID_sbgp_autonomousSysNum, /* 291 */
 #endif
+        NID_id_pkix_OCSP_noCheck, /* 369 */
         NID_policy_constraints, /* 401 */
         NID_proxyCertInfo,      /* 663 */
         NID_name_constraints,   /* 666 */
@@ -305,34 +301,49 @@ int X509_supported_extension(X509_EXTENSION *ex)
     return 0;
 }
 
-static int setup_dp(X509 *x, DIST_POINT *dp)
+/* return 1 on success, 0 if x is invalid, -1 on (internal) error */
+static int setup_dp(const X509 *x, DIST_POINT *dp)
 {
     const X509_NAME *iname = NULL;
     int i;
 
-    if (dp->reasons) {
+    if (dp->distpoint == NULL && sk_GENERAL_NAME_num(dp->CRLissuer) <= 0) {
+        ERR_raise(ERR_LIB_X509, X509_R_INVALID_DISTPOINT);
+        return 0;
+    }
+    if (dp->reasons != NULL) {
         if (dp->reasons->length > 0)
             dp->dp_reasons = dp->reasons->data[0];
         if (dp->reasons->length > 1)
             dp->dp_reasons |= (dp->reasons->data[1] << 8);
         dp->dp_reasons &= CRLDP_ALL_REASONS;
-    } else
+    } else {
         dp->dp_reasons = CRLDP_ALL_REASONS;
-    if (!dp->distpoint || (dp->distpoint->type != 1))
+    }
+    if (dp->distpoint == NULL || dp->distpoint->type != 1)
         return 1;
+
+    /* handle name fragment given by nameRelativeToCRLIssuer */
+    /*
+     * Note that the below way of determining iname is not really compliant
+     * with https://tools.ietf.org/html/rfc5280#section-4.2.1.13
+     * According to it, sk_GENERAL_NAME_num(dp->CRLissuer) MUST be <= 1
+     * and any CRLissuer could be of type different to GEN_DIRNAME.
+     */
     for (i = 0; i < sk_GENERAL_NAME_num(dp->CRLissuer); i++) {
         GENERAL_NAME *gen = sk_GENERAL_NAME_value(dp->CRLissuer, i);
+
         if (gen->type == GEN_DIRNAME) {
             iname = gen->d.directoryName;
             break;
         }
     }
-    if (!iname)
+    if (iname == NULL)
         iname = X509_get_issuer_name(x);
-
-    return DIST_POINT_set_dpname(dp->distpoint, iname);
+    return DIST_POINT_set_dpname(dp->distpoint, iname) ? 1 : -1;
 }
 
+/* return 1 on success, 0 if x is invalid, -1 on (internal) error */
 static int setup_crldp(X509 *x)
 {
     int i;
@@ -340,26 +351,31 @@ static int setup_crldp(X509 *x)
     x->crldp = X509_get_ext_d2i(x, NID_crl_distribution_points, &i, NULL);
     if (x->crldp == NULL && i != -1)
         return 0;
+
     for (i = 0; i < sk_DIST_POINT_num(x->crldp); i++) {
-        if (!setup_dp(x, sk_DIST_POINT_value(x->crldp, i)))
-            return 0;
+        int res = setup_dp(x, sk_DIST_POINT_value(x->crldp, i));
+
+        if (res < 1)
+            return res;
     }
     return 1;
 }
 
 /* Check that issuer public key algorithm matches subject signature algorithm */
-static int check_sig_alg_match(const EVP_PKEY *pkey, const X509 *subject)
+static int check_sig_alg_match(const EVP_PKEY *issuer_key, const X509 *subject)
 {
-    int pkey_nid;
+    int signer_nid, subj_sig_nid;
 
-    if (pkey == NULL)
+    if (issuer_key == NULL)
         return X509_V_ERR_NO_ISSUER_PUBLIC_KEY;
+    signer_nid = EVP_PKEY_base_id(issuer_key);
     if (OBJ_find_sigid_algs(OBJ_obj2nid(subject->cert_info.signature.algorithm),
-                            NULL, &pkey_nid) == 0)
-        return X509_V_ERR_UNSUPPORTED_SIGNATURE_ALGORITHM;
-    if (EVP_PKEY_type(pkey_nid) != EVP_PKEY_base_id(pkey))
-        return X509_V_ERR_SIGNATURE_ALGORITHM_MISMATCH;
-    return X509_V_OK;
+                            NULL, &subj_sig_nid) == 0)
+         return X509_V_ERR_UNSUPPORTED_SIGNATURE_ALGORITHM;
+    if (signer_nid == EVP_PKEY_type(subj_sig_nid)
+        || (signer_nid == NID_rsaEncryption && subj_sig_nid == NID_rsassaPss))
+        return X509_V_OK;
+    return X509_V_ERR_SIGNATURE_ALGORITHM_MISMATCH;
 }
 
 #define V1_ROOT (EXFLAG_V1|EXFLAG_SS)
@@ -373,6 +389,8 @@ static int check_sig_alg_match(const EVP_PKEY *pkey, const X509 *subject)
 /*
  * Cache info on various X.509v3 extensions and further derived information,
  * e.g., if cert 'x' is self-issued, in x->ex_flags and other internal fields.
+ * x->sha1_hash is filled in, or else EXFLAG_NO_FINGERPRINT is set in x->flags.
+ * X509_SIG_INFO_VALID is set in x->flags if x->siginf was filled successfully.
  * Set EXFLAG_INVALID and return 0 in case the certificate is invalid.
  */
 int x509v3_cache_extensions(X509 *x)
@@ -382,8 +400,8 @@ int x509v3_cache_extensions(X509 *x)
     ASN1_BIT_STRING *usage;
     ASN1_BIT_STRING *ns;
     EXTENDED_KEY_USAGE *extusage;
-    X509_EXTENSION *ex;
     int i;
+    int res;
 
 #ifdef tsan_ld_acq
     /* fast lock-free check, see end of the function for details. */
@@ -396,32 +414,33 @@ int x509v3_cache_extensions(X509 *x)
         CRYPTO_THREAD_unlock(x->lock);
         return (x->ex_flags & EXFLAG_INVALID) == 0;
     }
-    ERR_set_mark();
 
+    /* Cache the SHA1 digest of the cert */
     if (!X509_digest(x, EVP_sha1(), x->sha1_hash, NULL))
-            x->ex_flags |= EXFLAG_INVALID;
+        x->ex_flags |= EXFLAG_NO_FINGERPRINT;
+
+    ERR_set_mark();
 
     /* V1 should mean no extensions ... */
     if (X509_get_version(x) == 0)
         x->ex_flags |= EXFLAG_V1;
 
     /* Handle basic constraints */
+    x->ex_pathlen = -1;
     if ((bs = X509_get_ext_d2i(x, NID_basic_constraints, &i, NULL)) != NULL) {
         if (bs->ca)
             x->ex_flags |= EXFLAG_CA;
         if (bs->pathlen != NULL) {
+            /*
+             * the error case !bs->ca is checked by check_chain()
+             * in case ctx->param->flags & X509_V_FLAG_X509_STRICT
+             */
             if (bs->pathlen->type == V_ASN1_NEG_INTEGER) {
+                ERR_raise(ERR_LIB_X509, X509V3_R_NEGATIVE_PATHLEN);
                 x->ex_flags |= EXFLAG_INVALID;
-                x->ex_pathlen = 0;
             } else {
                 x->ex_pathlen = ASN1_INTEGER_get(bs->pathlen);
-                if (!bs->ca && x->ex_pathlen != 0) {
-                    x->ex_flags |= EXFLAG_INVALID;
-                    x->ex_pathlen = 0;
-                }
             }
-        } else {
-            x->ex_pathlen = -1;
         }
         BASIC_CONSTRAINTS_free(bs);
         x->ex_flags |= EXFLAG_BCONS;
@@ -436,9 +455,9 @@ int x509v3_cache_extensions(X509 *x)
             || X509_get_ext_by_NID(x, NID_issuer_alt_name, -1) >= 0) {
             x->ex_flags |= EXFLAG_INVALID;
         }
-        if (pci->pcPathLengthConstraint) {
+        if (pci->pcPathLengthConstraint != NULL)
             x->ex_pcpathlen = ASN1_INTEGER_get(pci->pcPathLengthConstraint);
-        } else
+        else
             x->ex_pcpathlen = -1;
         PROXY_CERT_INFO_EXTENSION_free(pci);
         x->ex_flags |= EXFLAG_PROXY;
@@ -446,7 +465,7 @@ int x509v3_cache_extensions(X509 *x)
         x->ex_flags |= EXFLAG_INVALID;
     }
 
-    /* Handle (basic and extended) key usage */
+    /* Handle (basic) key usage */
     if ((usage = X509_get_ext_d2i(x, NID_key_usage, &i, NULL)) != NULL) {
         x->ex_kusage = 0;
         if (usage->length > 0) {
@@ -456,9 +475,16 @@ int x509v3_cache_extensions(X509 *x)
         }
         x->ex_flags |= EXFLAG_KUSAGE;
         ASN1_BIT_STRING_free(usage);
+        /* Check for empty key usage according to RFC 5280 section 4.2.1.3 */
+        if (x->ex_kusage == 0) {
+            ERR_raise(ERR_LIB_X509, X509V3_R_EMPTY_KEY_USAGE);
+            x->ex_flags |= EXFLAG_INVALID;
+        }
     } else if (i != -1) {
         x->ex_flags |= EXFLAG_INVALID;
     }
+
+    /* Handle extended key usage */
     x->ex_xkusage = 0;
     if ((extusage = X509_get_ext_d2i(x, NID_ext_key_usage, &i, NULL)) != NULL) {
         x->ex_flags |= EXFLAG_XKUSAGE;
@@ -493,6 +519,7 @@ int x509v3_cache_extensions(X509 *x)
                 x->ex_xkusage |= XKU_ANYEKU;
                 break;
             default:
+                /* ignore unknown extended key usage */
                 break;
             }
         }
@@ -517,6 +544,7 @@ int x509v3_cache_extensions(X509 *x)
     x->skid = X509_get_ext_d2i(x, NID_subject_key_identifier, &i, NULL);
     if (x->skid == NULL && i != -1)
         x->ex_flags |= EXFLAG_INVALID;
+
     x->akid = X509_get_ext_d2i(x, NID_authority_key_identifier, &i, NULL);
     if (x->akid == NULL && i != -1)
         x->ex_flags |= EXFLAG_INVALID;
@@ -538,8 +566,13 @@ int x509v3_cache_extensions(X509 *x)
     x->nc = X509_get_ext_d2i(x, NID_name_constraints, &i, NULL);
     if (x->nc == NULL && i != -1)
         x->ex_flags |= EXFLAG_INVALID;
-    if (!setup_crldp(x))
+
+    /* Handle CRL distribution point entries */
+    res = setup_crldp(x);
+    if (res == 0)
         x->ex_flags |= EXFLAG_INVALID;
+    else if (res < 0)
+        goto err;
 
 #ifndef OPENSSL_NO_RFC3779
     x->rfc3779_addr = X509_get_ext_d2i(x, NID_sbgp_ipAddrBlock, &i, NULL);
@@ -550,9 +583,10 @@ int x509v3_cache_extensions(X509 *x)
         x->ex_flags |= EXFLAG_INVALID;
 #endif
     for (i = 0; i < X509_get_ext_count(x); i++) {
-        ex = X509_get_ext(x, i);
-        if (OBJ_obj2nid(X509_EXTENSION_get_object(ex))
-            == NID_freshest_crl)
+        X509_EXTENSION *ex = X509_get_ext(x, i);
+        int nid = OBJ_obj2nid(X509_EXTENSION_get_object(ex));
+
+        if (nid == NID_freshest_crl)
             x->ex_flags |= EXFLAG_FRESHEST;
         if (!X509_EXTENSION_get_critical(ex))
             continue;
@@ -560,9 +594,26 @@ int x509v3_cache_extensions(X509 *x)
             x->ex_flags |= EXFLAG_CRITICAL;
             break;
         }
+        switch (nid) {
+        case NID_basic_constraints:
+            x->ex_flags |= EXFLAG_BCONS_CRITICAL;
+            break;
+        case NID_authority_key_identifier:
+            x->ex_flags |= EXFLAG_AKID_CRITICAL;
+            break;
+        case NID_subject_key_identifier:
+            x->ex_flags |= EXFLAG_SKID_CRITICAL;
+            break;
+        case NID_subject_alt_name:
+            x->ex_flags |= EXFLAG_SAN_CRITICAL;
+            break;
+        default:
+            break;
+        }
     }
 
-    x509_init_sig_info(x);
+    /* Set x->siginf, ignoring errors due to unsupported algos */
+    (void)x509_init_sig_info(x);
 
     x->ex_flags |= EXFLAG_SET; /* indicate that cert has been processed */
 #ifdef tsan_st_rel
@@ -574,9 +625,18 @@ int x509v3_cache_extensions(X509 *x)
      */
 #endif
     ERR_pop_to_mark();
-    CRYPTO_THREAD_unlock(x->lock);
+    if ((x->ex_flags & (EXFLAG_INVALID | EXFLAG_NO_FINGERPRINT)) == 0) {
+        CRYPTO_THREAD_unlock(x->lock);
+        return 1;
+    }
+    if ((x->ex_flags & EXFLAG_INVALID) != 0)
+        ERR_raise(ERR_LIB_X509, X509V3_R_INVALID_CERTIFICATE);
+    /* If computing sha1_hash failed the error queue already reflects this. */
 
-    return (x->ex_flags & EXFLAG_INVALID) == 0;
+ err:
+    x->ex_flags |= EXFLAG_SET; /* indicate that cert has been processed */
+    CRYPTO_THREAD_unlock(x->lock);
+    return 0;
 }
 
 /*-

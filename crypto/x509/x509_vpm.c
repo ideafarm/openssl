@@ -18,10 +18,6 @@
 
 #include "x509_local.h"
 
-DEFINE_STACK_OF(ASN1_OBJECT)
-DEFINE_STACK_OF(X509_VERIFY_PARAM)
-DEFINE_STACK_OF_STRING()
-
 /* X509_VERIFY_PARAM functions */
 
 #define SET_HOST 0
@@ -89,7 +85,7 @@ X509_VERIFY_PARAM *X509_VERIFY_PARAM_new(void)
 
     param = OPENSSL_zalloc(sizeof(*param));
     if (param == NULL) {
-        X509err(X509_F_X509_VERIFY_PARAM_NEW, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_X509, ERR_R_MALLOC_FAILURE);
         return NULL;
     }
     param->trust = X509_TRUST_DEFAULT;

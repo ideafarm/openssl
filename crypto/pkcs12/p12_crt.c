@@ -12,10 +12,6 @@
 #include <openssl/pkcs12.h>
 #include "p12_local.h"
 
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(PKCS7)
-DEFINE_STACK_OF(PKCS12_SAFEBAG)
-
 static int pkcs12_add_bag(STACK_OF(PKCS12_SAFEBAG) **pbags,
                           PKCS12_SAFEBAG *bag);
 
@@ -59,7 +55,7 @@ PKCS12 *PKCS12_create(const char *pass, const char *name, EVP_PKEY *pkey, X509 *
         mac_iter = 1;
 
     if (pkey == NULL && cert == NULL && ca == NULL) {
-        PKCS12err(PKCS12_F_PKCS12_CREATE, PKCS12_R_INVALID_NULL_ARGUMENT);
+        ERR_raise(ERR_LIB_PKCS12, PKCS12_R_INVALID_NULL_ARGUMENT);
         return NULL;
     }
 

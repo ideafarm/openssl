@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2001-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright Siemens AG 2018-2020
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -25,8 +25,6 @@
 
 #include "http_local.h"
 
-DEFINE_STACK_OF(CONF_VALUE)
-
 #define HTTP_PREFIX "HTTP/"
 #define HTTP_VERSION_PATT "1." /* allow 1.x */
 #define HTTP_VERSION_STR_LEN 3
@@ -49,7 +47,7 @@ struct ossl_http_req_ctx_st {
     BIO *wbio;                  /* BIO to send request to */
     BIO *rbio;                  /* BIO to read response from */
     BIO *mem;                   /* Memory BIO response is built into */
-    int method_GET;             /* HTTP method "GET" or "POST" */
+    int method_POST;            /* HTTP method is "POST" (else "GET") */
     const char *expected_ct;    /* expected Content-Type, or NULL */
     int expect_asn1;            /* response must be ASN.1-encoded */
     unsigned long resp_len;     /* length of response */
@@ -77,7 +75,7 @@ struct ossl_http_req_ctx_st {
 #define OHS_HTTP_HEADER    (9 | OHS_NOREAD) /* Headers set, w/o final \r\n */
 
 OSSL_HTTP_REQ_CTX *OSSL_HTTP_REQ_CTX_new(BIO *wbio, BIO *rbio,
-                                         int method_GET, int maxline,
+                                         int method_POST, int maxline,
                                          unsigned long max_resp_len,
                                          int timeout,
                                          const char *expected_content_type,
@@ -86,7 +84,7 @@ OSSL_HTTP_REQ_CTX *OSSL_HTTP_REQ_CTX_new(BIO *wbio, BIO *rbio,
     OSSL_HTTP_REQ_CTX *rctx;
 
     if (wbio == NULL || rbio == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
 
@@ -102,7 +100,7 @@ OSSL_HTTP_REQ_CTX *OSSL_HTTP_REQ_CTX_new(BIO *wbio, BIO *rbio,
         OSSL_HTTP_REQ_CTX_free(rctx);
         return NULL;
     }
-    rctx->method_GET = method_GET;
+    rctx->method_POST = method_POST;
     rctx->expected_ct = expected_content_type;
     rctx->expect_asn1 = expect_asn1;
     rctx->resp_len = 0;
@@ -123,7 +121,7 @@ void OSSL_HTTP_REQ_CTX_free(OSSL_HTTP_REQ_CTX *rctx)
 BIO *OSSL_HTTP_REQ_CTX_get0_mem_bio(OSSL_HTTP_REQ_CTX *rctx)
 {
     if (rctx == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     return rctx->mem;
@@ -133,25 +131,26 @@ void OSSL_HTTP_REQ_CTX_set_max_response_length(OSSL_HTTP_REQ_CTX *rctx,
                                                unsigned long len)
 {
     if (rctx == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return;
     }
     rctx->max_resp_len = len != 0 ? len : HTTP_DEFAULT_MAX_RESP_LEN;
 }
 
 /*
- * Create HTTP header using given op and path (or "/" in case path is NULL).
+ * Create request line using |ctx| and |path| (or "/" in case |path| is NULL).
  * Server name (and port) must be given if and only if plain HTTP proxy is used.
  */
-int OSSL_HTTP_REQ_CTX_header(OSSL_HTTP_REQ_CTX *rctx, const char *server,
-                             const char *port, const char *path)
+int OSSL_HTTP_REQ_CTX_set_request_line(OSSL_HTTP_REQ_CTX *rctx,
+                                       const char *server, const char *port,
+                                       const char *path)
 {
     if (rctx == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return 0;
     }
 
-    if (BIO_printf(rctx->mem, "%s ", rctx->method_GET ? "GET" : "POST") <= 0)
+    if (BIO_printf(rctx->mem, "%s ", rctx->method_POST ? "POST" : "GET") <= 0)
         return 0;
 
     if (server != NULL) { /* HTTP (but not HTTPS) proxy is used */
@@ -181,7 +180,7 @@ int OSSL_HTTP_REQ_CTX_add1_header(OSSL_HTTP_REQ_CTX *rctx,
                                   const char *name, const char *value)
 {
     if (rctx == NULL || name == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return 0;
     }
 
@@ -206,7 +205,11 @@ static int OSSL_HTTP_REQ_CTX_content(OSSL_HTTP_REQ_CTX *rctx,
     long req_len;
 
     if (rctx == NULL || req_mem == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
+        return 0;
+    }
+    if (!rctx->method_POST) {
+        ERR_raise(ERR_LIB_HTTP, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
         return 0;
     }
 
@@ -227,7 +230,7 @@ BIO *HTTP_asn1_item2bio(const ASN1_ITEM *it, const ASN1_VALUE *val)
     BIO *res;
 
     if (it == NULL || val == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
 
@@ -247,7 +250,7 @@ int OSSL_HTTP_REQ_CTX_i2d(OSSL_HTTP_REQ_CTX *rctx, const char *content_type,
     int res;
 
     if (rctx == NULL || it == NULL || req == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return 0;
     }
 
@@ -296,19 +299,20 @@ OSSL_HTTP_REQ_CTX *HTTP_REQ_CTX_new(BIO *wbio, BIO *rbio, int use_http_proxy,
     OSSL_HTTP_REQ_CTX *rctx;
 
     if (use_http_proxy && (server == NULL || port == NULL)) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     /* remaining parameters are checked indirectly by the functions called */
 
-    if ((rctx = OSSL_HTTP_REQ_CTX_new(wbio, rbio, req_mem == NULL, maxline,
+    if ((rctx = OSSL_HTTP_REQ_CTX_new(wbio, rbio, req_mem != NULL, maxline,
                                       max_resp_len, timeout,
                                       expected_content_type, expect_asn1))
         == NULL)
         return NULL;
 
-    if (OSSL_HTTP_REQ_CTX_header(rctx, use_http_proxy ? server : NULL,
-                                 port, path)
+    if (OSSL_HTTP_REQ_CTX_set_request_line(rctx,
+                                           use_http_proxy ? server : NULL, port,
+                                           path)
         && OSSL_HTTP_REQ_CTX_add1_headers(rctx, headers, server)
         && (req_mem == NULL
             || OSSL_HTTP_REQ_CTX_content(rctx, content_type, req_mem)))
@@ -332,7 +336,7 @@ static int parse_http_line1(char *line)
     for (code = line; *code != '\0' && !ossl_isspace(*code); code++)
         continue;
     if (*code == '\0') {
-        HTTPerr(0, HTTP_R_RESPONSE_PARSE_ERROR);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_PARSE_ERROR);
         return 0;
     }
 
@@ -341,7 +345,7 @@ static int parse_http_line1(char *line)
         code++;
 
     if (*code == '\0') {
-        HTTPerr(0, HTTP_R_RESPONSE_PARSE_ERROR);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_PARSE_ERROR);
         return 0;
     }
 
@@ -350,7 +354,7 @@ static int parse_http_line1(char *line)
         continue;
 
     if (*reason == '\0') {
-        HTTPerr(0, HTTP_R_RESPONSE_PARSE_ERROR);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_PARSE_ERROR);
         return 0;
     }
 
@@ -385,41 +389,26 @@ static int parse_http_line1(char *line)
         return retcode;
     default:
         if (retcode < 400)
-            HTTPerr(0, HTTP_R_STATUS_CODE_UNSUPPORTED);
+            retcode = HTTP_R_STATUS_CODE_UNSUPPORTED;
         else
-            HTTPerr(0, HTTP_R_RECEIVED_ERROR);
+            retcode = HTTP_R_RECEIVED_ERROR;
         if (*reason == '\0')
-            ERR_add_error_data(2, "Code=", code);
+            ERR_raise_data(ERR_LIB_HTTP, retcode, "Code=%s", code);
         else
-            ERR_add_error_data(4, "Code=", code, ",Reason=", reason);
+            ERR_raise_data(ERR_LIB_HTTP, retcode,
+                           "Code=%s, Reason=%s", code, reason);
         return 0;
     }
 }
 
 static int check_set_resp_len(OSSL_HTTP_REQ_CTX *rctx, unsigned long len)
 {
-    const char *tag = NULL;
-    unsigned long val = 0;
-
-    if (len > rctx->max_resp_len) {
-        HTTPerr(0, HTTP_R_MAX_RESP_LEN_EXCEEDED);
-        tag = ",max=";
-        val = rctx->max_resp_len;
-    }
-    if (rctx->resp_len != 0 && rctx->resp_len != len) {
-        HTTPerr(0, HTTP_R_INCONSISTENT_CONTENT_LENGTH);
-        tag = ",before=";
-        val = rctx->resp_len;
-    }
-    if (tag != NULL) {
-        char len_str[32];
-        char str[32];
-
-        BIO_snprintf(len_str, sizeof(len_str), "%lu", len);
-        BIO_snprintf(str, sizeof(str), "%lu", val);
-        ERR_add_error_data(4, "length=", len_str, tag, str);
-        return 0;
-    }
+    if (len > rctx->max_resp_len)
+        ERR_raise_data(ERR_LIB_HTTP, HTTP_R_MAX_RESP_LEN_EXCEEDED,
+                       "length=%lu, max=%lu", len, rctx->max_resp_len);
+    if (rctx->resp_len != 0 && rctx->resp_len != len)
+        ERR_raise_data(ERR_LIB_HTTP, HTTP_R_INCONSISTENT_CONTENT_LENGTH,
+                       "length=%lu, before=%lu", len, rctx->resp_len);
     rctx->resp_len = len;
     return 1;
 }
@@ -437,7 +426,7 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
     char *key, *value, *line_end = NULL;
 
     if (rctx == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return 0;
     }
 
@@ -541,7 +530,7 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
 
         /* Don't allow excessive lines */
         if (n == rctx->iobuflen) {
-            HTTPerr(0, HTTP_R_RESPONSE_LINE_TOO_LONG);
+            ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_LINE_TOO_LONG);
             rctx->state = OHS_ERROR;
             return 0;
         }
@@ -554,11 +543,11 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
                 goto next_line;
             case HTTP_STATUS_CODE_MOVED_PERMANENTLY:
             case HTTP_STATUS_CODE_FOUND: /* i.e., moved temporarily */
-                if (rctx->method_GET) {
+                if (!rctx->method_POST) { /* method is GET */
                     rctx->state = OHS_REDIRECT;
                     goto next_line;
                 }
-                HTTPerr(0, HTTP_R_REDIRECTION_NOT_ENABLED);
+                ERR_raise(ERR_LIB_HTTP, HTTP_R_REDIRECTION_NOT_ENABLED);
                 /* redirection is not supported/recommended for POST */
                 /* fall through */
             default:
@@ -587,9 +576,9 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
             if (rctx->expected_ct != NULL
                     && strcasecmp(key, "Content-Type") == 0) {
                 if (strcasecmp(rctx->expected_ct, value) != 0) {
-                    HTTPerr(0, HTTP_R_UNEXPECTED_CONTENT_TYPE);
-                    ERR_add_error_data(4, "expected=", rctx->expected_ct,
-                                       ",actual=", value);
+                    ERR_raise_data(ERR_LIB_HTTP, HTTP_R_UNEXPECTED_CONTENT_TYPE,
+                                   "expected=%s, actual=%s",
+                                   rctx->expected_ct, value);
                     return 0;
                 }
                 rctx->expected_ct = NULL; /* content-type has been found */
@@ -597,8 +586,9 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
             if (strcasecmp(key, "Content-Length") == 0) {
                 resp_len = strtoul(value, &line_end, 10);
                 if (line_end == value || *line_end != '\0') {
-                    HTTPerr(0, HTTP_R_ERROR_PARSING_CONTENT_LENGTH);
-                    ERR_add_error_data(2, "input=", value);
+                    ERR_raise_data(ERR_LIB_HTTP,
+                                   HTTP_R_ERROR_PARSING_CONTENT_LENGTH,
+                                   "input=%s", value);
                     return 0;
                 }
                 if (!check_set_resp_len(rctx, resp_len))
@@ -615,13 +605,13 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
             goto next_line;
 
         if (rctx->expected_ct != NULL) {
-            HTTPerr(0, HTTP_R_MISSING_CONTENT_TYPE);
-            ERR_add_error_data(2, "expected=", rctx->expected_ct);
+            ERR_raise_data(ERR_LIB_HTTP, HTTP_R_MISSING_CONTENT_TYPE,
+                           "expected=%s", rctx->expected_ct);
             return 0;
         }
         if (rctx->state == OHS_REDIRECT) {
             /* http status code indicated redirect but there was no Location */
-            HTTPerr(0, HTTP_R_MISSING_REDIRECT_LOCATION);
+            ERR_raise(ERR_LIB_HTTP, HTTP_R_MISSING_REDIRECT_LOCATION);
             return 0;
         }
 
@@ -645,7 +635,7 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
 
         /* Check it is an ASN1 SEQUENCE */
         if (*p++ != (V_ASN1_SEQUENCE | V_ASN1_CONSTRUCTED)) {
-            HTTPerr(0, HTTP_R_MISSING_ASN1_ENCODING);
+            ERR_raise(ERR_LIB_HTTP, HTTP_R_MISSING_ASN1_ENCODING);
             return 0;
         }
 
@@ -660,7 +650,7 @@ int OSSL_HTTP_REQ_CTX_nbio(OSSL_HTTP_REQ_CTX *rctx)
             n = *p & 0x7F;
             /* Not NDEF or excessive length */
             if (n == 0 || (n > 4)) {
-                HTTPerr(0, HTTP_R_ERROR_PARSING_ASN1_LENGTH);
+                ERR_raise(ERR_LIB_HTTP, HTTP_R_ERROR_PARSING_ASN1_LENGTH);
                 return 0;
             }
             p++;
@@ -741,7 +731,7 @@ static ASN1_VALUE *BIO_mem_d2i(BIO *mem, const ASN1_ITEM *it)
     ASN1_VALUE *resp = ASN1_item_d2i(NULL, &p, len, it);
 
     if (resp == NULL)
-        HTTPerr(0, HTTP_R_RESPONSE_PARSE_ERROR);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_PARSE_ERROR);
     return resp;
 }
 
@@ -751,7 +741,7 @@ static BIO *OSSL_HTTP_REQ_CTX_transfer(OSSL_HTTP_REQ_CTX *rctx)
     int rv;
 
     if (rctx == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
 
@@ -769,9 +759,9 @@ static BIO *OSSL_HTTP_REQ_CTX_transfer(OSSL_HTTP_REQ_CTX *rctx)
     if (rv == 0) {
         if (rctx->redirection_url == NULL) { /* an error occurred */
             if (sending && (rctx->state & OHS_NOREAD) != 0)
-                HTTPerr(0, HTTP_R_ERROR_SENDING);
+                ERR_raise(ERR_LIB_HTTP, HTTP_R_ERROR_SENDING);
             else
-                HTTPerr(0, HTTP_R_ERROR_RECEIVING);
+                ERR_raise(ERR_LIB_HTTP, HTTP_R_ERROR_RECEIVING);
         }
         return NULL;
     }
@@ -785,7 +775,7 @@ ASN1_VALUE *OSSL_HTTP_REQ_CTX_sendreq_d2i(OSSL_HTTP_REQ_CTX *rctx,
                                           const ASN1_ITEM *it)
 {
     if (rctx == NULL || it == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     return BIO_mem_d2i(OSSL_HTTP_REQ_CTX_transfer(rctx), it);
@@ -847,11 +837,11 @@ BIO *OSSL_HTTP_transfer(const char *server, const char *port, const char *path,
         *redirection_url = NULL; /* do this beforehand to prevent dbl free */
 
     if (use_ssl && bio_update_fn == NULL) {
-        HTTPerr(0, HTTP_R_TLS_NOT_ENABLED);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_TLS_NOT_ENABLED);
         return NULL;
     }
     if (rbio != NULL && (bio == NULL || bio_update_fn != NULL)) {
-        HTTPerr(0, ERR_R_PASSED_INVALID_ARGUMENT);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_INVALID_ARGUMENT);
         return NULL;
     }
 
@@ -860,7 +850,7 @@ BIO *OSSL_HTTP_transfer(const char *server, const char *port, const char *path,
     } else {
 #ifndef OPENSSL_NO_SOCK
         if (server == NULL) {
-            HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+            ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
             return NULL;
         }
         if (*port == '\0')
@@ -871,7 +861,7 @@ BIO *OSSL_HTTP_transfer(const char *server, const char *port, const char *path,
         if ((cbio = HTTP_new_bio(server, port, proxy)) == NULL)
             return NULL;
 #else
-        HTTPerr(0, HTTP_R_SOCK_NOT_SUPPORTED);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_SOCK_NOT_SUPPORTED);
         return NULL;
 #endif
     }
@@ -904,7 +894,7 @@ BIO *OSSL_HTTP_transfer(const char *server, const char *port, const char *path,
     if (resp == NULL) {
         if (rctx->redirection_url != NULL) {
             if (redirection_url == NULL)
-                HTTPerr(0, HTTP_R_REDIRECTION_NOT_ENABLED);
+                ERR_raise(ERR_LIB_HTTP, HTTP_R_REDIRECTION_NOT_ENABLED);
             else
                 /* may be NULL if out of memory: */
                 *redirection_url = OPENSSL_strdup(rctx->redirection_url);
@@ -967,14 +957,14 @@ static int redirection_ok(int n_redir, const char *old_url, const char *new_url)
     size_t https_len = strlen(OSSL_HTTPS_NAME":");
 
     if (n_redir >= HTTP_VERSION_MAX_REDIRECTIONS) {
-        HTTPerr(0, HTTP_R_TOO_MANY_REDIRECTIONS);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_TOO_MANY_REDIRECTIONS);
         return 0;
     }
     if (*new_url == '/') /* redirection to same server => same protocol */
         return 1;
     if (strncmp(old_url, OSSL_HTTPS_NAME":", https_len) == 0 &&
         strncmp(new_url, OSSL_HTTPS_NAME":", https_len) != 0) {
-        HTTPerr(0, HTTP_R_REDIRECTION_FROM_HTTPS_TO_HTTP);
+        ERR_raise(ERR_LIB_HTTP, HTTP_R_REDIRECTION_FROM_HTTPS_TO_HTTP);
         return 0;
     }
     return 1;
@@ -998,14 +988,15 @@ BIO *OSSL_HTTP_get(const char *url, const char *proxy, const char *no_proxy,
     BIO *resp = NULL;
 
     if (url == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     if ((current_url = OPENSSL_strdup(url)) == NULL)
         return NULL;
 
     for (;;) {
-        if (!OSSL_HTTP_parse_url(current_url, &host, &port, &path, &use_ssl))
+        if (!OSSL_HTTP_parse_url(current_url, &host, &port, NULL /* port_num */,
+                                 &path, &use_ssl))
             break;
 
      new_rpath:
@@ -1054,7 +1045,7 @@ ASN1_VALUE *OSSL_HTTP_get_asn1(const char *url,
     ASN1_VALUE *resp = NULL;
 
     if (url == NULL || it == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     if ((mem = OSSL_HTTP_get(url, proxy, no_proxy, bio, rbio, bio_update_fn,
@@ -1084,7 +1075,7 @@ ASN1_VALUE *OSSL_HTTP_post_asn1(const char *server, const char *port,
     ASN1_VALUE *resp = NULL;
 
     if (req == NULL) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         return NULL;
     }
     /* remaining parameters are checked indirectly */
@@ -1148,7 +1139,7 @@ int OSSL_HTTP_proxy_connect(BIO *bio, const char *server, const char *port,
 
     if (bio == NULL || server == NULL
             || (bio_err != NULL && prog == NULL)) {
-        HTTPerr(0, ERR_R_PASSED_NULL_PARAMETER);
+        ERR_raise(ERR_LIB_HTTP, ERR_R_PASSED_NULL_PARAMETER);
         goto end;
     }
     if (port == NULL || *port == '\0')
@@ -1224,7 +1215,7 @@ int OSSL_HTTP_proxy_connect(BIO *bio, const char *server, const char *port,
 
         /* RFC 7231 4.3.6: any 2xx status code is valid */
         if (strncmp(mbuf, HTTP_PREFIX, strlen(HTTP_PREFIX)) != 0) {
-            HTTPerr(0, HTTP_R_RESPONSE_PARSE_ERROR);
+            ERR_raise(ERR_LIB_HTTP, HTTP_R_RESPONSE_PARSE_ERROR);
             BIO_printf(bio_err, "%s: HTTP CONNECT failed, non-HTTP response\n",
                        prog);
             /* Wrong protocol, not even HTTP, so stop reading headers */
@@ -1232,7 +1223,7 @@ int OSSL_HTTP_proxy_connect(BIO *bio, const char *server, const char *port,
         }
         mbufp = mbuf + strlen(HTTP_PREFIX);
         if (strncmp(mbufp, HTTP_VERSION_PATT, strlen(HTTP_VERSION_PATT)) != 0) {
-            HTTPerr(0, HTTP_R_RECEIVED_WRONG_HTTP_VERSION);
+            ERR_raise(ERR_LIB_HTTP, HTTP_R_RECEIVED_WRONG_HTTP_VERSION);
             BIO_printf(bio_err,
                        "%s: HTTP CONNECT failed, bad HTTP version %.*s\n",
                        prog, HTTP_VERSION_STR_LEN, mbufp);
@@ -1245,8 +1236,8 @@ int OSSL_HTTP_proxy_connect(BIO *bio, const char *server, const char *port,
             while (read_len > 0 && ossl_isspace(mbuf[read_len - 1]))
                 read_len--;
             mbuf[read_len] = '\0';
-            HTTPerr(0, HTTP_R_CONNECT_FAILURE);
-            ERR_add_error_data(2, "Reason=", mbufp);
+            ERR_raise_data(ERR_LIB_HTTP, HTTP_R_CONNECT_FAILURE,
+                           "Reason=%s", mbufp);
             BIO_printf(bio_err, "%s: HTTP CONNECT failed, Reason=%s\n",
                        prog, mbufp);
             goto end;

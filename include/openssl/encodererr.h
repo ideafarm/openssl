@@ -8,18 +8,15 @@
  * https://www.openssl.org/source/license.html
  */
 
-#ifndef OPENSSL_OSSL_ENCODERERR_H
-# define OPENSSL_OSSL_ENCODERERR_H
+#ifndef OPENSSL_ENCODERERR_H
+# define OPENSSL_ENCODERERR_H
 # pragma once
 
 # include <openssl/opensslconf.h>
 # include <openssl/symhacks.h>
+# include <openssl/cryptoerr_legacy.h>
 
 
-# ifdef  __cplusplus
-extern "C"
-# endif
-int ERR_load_OSSL_ENCODER_strings(void);
 
 /*
  * OSSL_ENCODER function codes.
@@ -30,7 +27,8 @@ int ERR_load_OSSL_ENCODER_strings(void);
 /*
  * OSSL_ENCODER reason codes.
  */
-# define OSSL_ENCODER_R_INCORRECT_PROPERTY_QUERY       100
-# define OSSL_ENCODER_R_ENCODER_NOT_FOUND           101
+# define OSSL_ENCODER_R_ENCODER_NOT_FOUND                 101
+# define OSSL_ENCODER_R_INCORRECT_PROPERTY_QUERY          100
+# define OSSL_ENCODER_R_MISSING_GET_PARAMS                102
 
 #endif

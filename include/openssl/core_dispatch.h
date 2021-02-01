@@ -66,8 +66,8 @@ OSSL_CORE_MAKE_FUNC(int,core_get_params,(const OSSL_CORE_HANDLE *prov,
 # define OSSL_FUNC_CORE_THREAD_START           3
 OSSL_CORE_MAKE_FUNC(int,core_thread_start,(const OSSL_CORE_HANDLE *prov,
                                            OSSL_thread_stop_handler_fn handfn))
-# define OSSL_FUNC_CORE_GET_LIBRARY_CONTEXT    4
-OSSL_CORE_MAKE_FUNC(OPENSSL_CORE_CTX *,core_get_library_context,
+# define OSSL_FUNC_CORE_GET_LIBCTX             4
+OSSL_CORE_MAKE_FUNC(OPENSSL_CORE_CTX *,core_get_libctx,
                     (const OSSL_CORE_HANDLE *prov))
 # define OSSL_FUNC_CORE_NEW_ERROR              5
 OSSL_CORE_MAKE_FUNC(void,core_new_error,(const OSSL_CORE_HANDLE *prov))
@@ -161,6 +161,23 @@ OSSL_CORE_MAKE_FUNC(int, BIO_ctrl, (OSSL_CORE_BIO *bio,
 OSSL_CORE_MAKE_FUNC(void, self_test_cb, (OPENSSL_CORE_CTX *ctx, OSSL_CALLBACK **cb,
                                          void **cbarg))
 
+/* Functions to get seed material from the operating system */
+#define OSSL_FUNC_GET_ENTROPY                101
+#define OSSL_FUNC_CLEANUP_ENTROPY            102
+#define OSSL_FUNC_GET_NONCE                  103
+#define OSSL_FUNC_CLEANUP_NONCE              104
+OSSL_CORE_MAKE_FUNC(size_t, get_entropy, (const OSSL_CORE_HANDLE *handle,
+                                          unsigned char **pout, int entropy,
+                                          size_t min_len, size_t max_len))
+OSSL_CORE_MAKE_FUNC(void, cleanup_entropy, (const OSSL_CORE_HANDLE *handle,
+                                            unsigned char *buf, size_t len))
+OSSL_CORE_MAKE_FUNC(size_t, get_nonce, (const OSSL_CORE_HANDLE *handle,
+                                        unsigned char **pout, size_t min_len,
+                                        size_t max_len, const void *salt,
+                                        size_t salt_len))
+OSSL_CORE_MAKE_FUNC(void, cleanup_nonce, (const OSSL_CORE_HANDLE *handle,
+                                          unsigned char *buf, size_t len))
+
 /* Functions provided by the provider to the Core, reserved numbers 1024-1535 */
 # define OSSL_FUNC_PROVIDER_TEARDOWN           1024
 OSSL_CORE_MAKE_FUNC(void,provider_teardown,(void *provctx))
@@ -193,6 +210,7 @@ OSSL_CORE_MAKE_FUNC(int, provider_self_test, (void *provctx))
 # define OSSL_OP_KEYEXCH                            11
 # define OSSL_OP_SIGNATURE                          12
 # define OSSL_OP_ASYM_CIPHER                        13
+# define OSSL_OP_KEM                                14
 /* New section for non-EVP operations */
 # define OSSL_OP_ENCODER                            20
 # define OSSL_OP_DECODER                            21
@@ -529,11 +547,11 @@ OSSL_CORE_MAKE_FUNC(const char *, keymgmt_query_operation_name,
 
 /* Key checks - key data content checks */
 # define OSSL_FUNC_KEYMGMT_HAS                        21
-OSSL_CORE_MAKE_FUNC(int, keymgmt_has, (void *keydata, int selection))
+OSSL_CORE_MAKE_FUNC(int, keymgmt_has, (const void *keydata, int selection))
 
 /* Key checks - validation */
 # define OSSL_FUNC_KEYMGMT_VALIDATE                   22
-OSSL_CORE_MAKE_FUNC(int, keymgmt_validate, (void *keydata, int selection))
+OSSL_CORE_MAKE_FUNC(int, keymgmt_validate, (const void *keydata, int selection))
 
 /* Key checks - matching */
 # define OSSL_FUNC_KEYMGMT_MATCH                      23
@@ -717,26 +735,69 @@ OSSL_CORE_MAKE_FUNC(int, asym_cipher_set_ctx_params,
 OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, asym_cipher_settable_ctx_params,
                     (void *provctx))
 
+/* Asymmetric Key encapsulation */
+# define OSSL_FUNC_KEM_NEWCTX                  1
+# define OSSL_FUNC_KEM_ENCAPSULATE_INIT        2
+# define OSSL_FUNC_KEM_ENCAPSULATE             3
+# define OSSL_FUNC_KEM_DECAPSULATE_INIT        4
+# define OSSL_FUNC_KEM_DECAPSULATE             5
+# define OSSL_FUNC_KEM_FREECTX                 6
+# define OSSL_FUNC_KEM_DUPCTX                  7
+# define OSSL_FUNC_KEM_GET_CTX_PARAMS          8
+# define OSSL_FUNC_KEM_GETTABLE_CTX_PARAMS     9
+# define OSSL_FUNC_KEM_SET_CTX_PARAMS         10
+# define OSSL_FUNC_KEM_SETTABLE_CTX_PARAMS    11
+
+OSSL_CORE_MAKE_FUNC(void *, kem_newctx, (void *provctx))
+OSSL_CORE_MAKE_FUNC(int, kem_encapsulate_init, (void *ctx, void *provkey))
+OSSL_CORE_MAKE_FUNC(int, kem_encapsulate, (void *ctx,
+                                           unsigned char *out, size_t *outlen,
+                                           unsigned char *secret,
+                                           size_t *secretlen))
+OSSL_CORE_MAKE_FUNC(int, kem_decapsulate_init, (void *ctx, void *provkey))
+OSSL_CORE_MAKE_FUNC(int, kem_decapsulate, (void *ctx,
+                                           unsigned char *out, size_t *outlen,
+                                           const unsigned char *in, size_t inlen))
+OSSL_CORE_MAKE_FUNC(void, kem_freectx, (void *ctx))
+OSSL_CORE_MAKE_FUNC(void *, kem_dupctx, (void *ctx))
+OSSL_CORE_MAKE_FUNC(int, kem_get_ctx_params, (void *ctx, OSSL_PARAM params[]))
+OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, kem_gettable_ctx_params, (void *provctx))
+OSSL_CORE_MAKE_FUNC(int, kem_set_ctx_params,
+                    (void *ctx, const OSSL_PARAM params[]))
+OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, kem_settable_ctx_params, (void *provctx))
+
 /* Encoders and decoders */
 # define OSSL_FUNC_ENCODER_NEWCTX                      1
 # define OSSL_FUNC_ENCODER_FREECTX                     2
-# define OSSL_FUNC_ENCODER_SET_CTX_PARAMS              3
-# define OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS         4
-# define OSSL_FUNC_ENCODER_ENCODE_DATA                10
-# define OSSL_FUNC_ENCODER_ENCODE_OBJECT              11
+# define OSSL_FUNC_ENCODER_GET_PARAMS                  3
+# define OSSL_FUNC_ENCODER_GETTABLE_PARAMS             4
+# define OSSL_FUNC_ENCODER_SET_CTX_PARAMS              5
+# define OSSL_FUNC_ENCODER_SETTABLE_CTX_PARAMS         6
+# define OSSL_FUNC_ENCODER_DOES_SELECTION             10
+# define OSSL_FUNC_ENCODER_ENCODE                     11
+# define OSSL_FUNC_ENCODER_IMPORT_OBJECT              20
+# define OSSL_FUNC_ENCODER_FREE_OBJECT                21
 OSSL_CORE_MAKE_FUNC(void *, encoder_newctx, (void *provctx))
 OSSL_CORE_MAKE_FUNC(void, encoder_freectx, (void *ctx))
+OSSL_CORE_MAKE_FUNC(int, encoder_get_params, (OSSL_PARAM params[]))
+OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, encoder_gettable_params,
+                    (void *provctx))
 OSSL_CORE_MAKE_FUNC(int, encoder_set_ctx_params,
                     (void *ctx, const OSSL_PARAM params[]))
 OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, encoder_settable_ctx_params,
                     (void *provctx))
 
-OSSL_CORE_MAKE_FUNC(int, encoder_encode_data,
-                    (void *ctx, const OSSL_PARAM[], OSSL_CORE_BIO *out,
+OSSL_CORE_MAKE_FUNC(int, encoder_does_selection,
+                    (void *provctx, int selection))
+OSSL_CORE_MAKE_FUNC(int, encoder_encode,
+                    (void *ctx, OSSL_CORE_BIO *out,
+                     const void *obj_raw, const OSSL_PARAM obj_abstract[],
+                     int selection,
                      OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg))
-OSSL_CORE_MAKE_FUNC(int, encoder_encode_object,
-                    (void *ctx, void *obj, OSSL_CORE_BIO *out,
-                     OSSL_PASSPHRASE_CALLBACK *cb, void *cbarg))
+
+OSSL_CORE_MAKE_FUNC(void *, encoder_import_object,
+                    (void *ctx, int selection, const OSSL_PARAM params[]))
+OSSL_CORE_MAKE_FUNC(void, encoder_free_object, (void *obj))
 
 # define OSSL_FUNC_DECODER_NEWCTX                      1
 # define OSSL_FUNC_DECODER_FREECTX                     2
@@ -744,8 +805,9 @@ OSSL_CORE_MAKE_FUNC(int, encoder_encode_object,
 # define OSSL_FUNC_DECODER_GETTABLE_PARAMS             4
 # define OSSL_FUNC_DECODER_SET_CTX_PARAMS              5
 # define OSSL_FUNC_DECODER_SETTABLE_CTX_PARAMS         6
-# define OSSL_FUNC_DECODER_DECODE                     10
-# define OSSL_FUNC_DECODER_EXPORT_OBJECT              11
+# define OSSL_FUNC_DECODER_DOES_SELECTION             10
+# define OSSL_FUNC_DECODER_DECODE                     11
+# define OSSL_FUNC_DECODER_EXPORT_OBJECT              20
 OSSL_CORE_MAKE_FUNC(void *, decoder_newctx, (void *provctx))
 OSSL_CORE_MAKE_FUNC(void, decoder_freectx, (void *ctx))
 OSSL_CORE_MAKE_FUNC(int, decoder_get_params, (OSSL_PARAM params[]))
@@ -756,8 +818,10 @@ OSSL_CORE_MAKE_FUNC(int, decoder_set_ctx_params,
 OSSL_CORE_MAKE_FUNC(const OSSL_PARAM *, decoder_settable_ctx_params,
                     (void *provctx))
 
+OSSL_CORE_MAKE_FUNC(int, decoder_does_selection,
+                    (void *provctx, int selection))
 OSSL_CORE_MAKE_FUNC(int, decoder_decode,
-                    (void *ctx, OSSL_CORE_BIO *in,
+                    (void *ctx, OSSL_CORE_BIO *in, int selection,
                      OSSL_CALLBACK *metadata_cb, void *metadata_cbarg,
                      OSSL_PASSPHRASE_CALLBACK *pw_cb, void *pw_cbarg))
 OSSL_CORE_MAKE_FUNC(int, decoder_export_object,

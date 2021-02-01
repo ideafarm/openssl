@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2007-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright Nokia 2007-2019
  * Copyright Siemens AG 2015-2019
  *
@@ -9,14 +9,11 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "cmp_testlib.h"
+#include "helpers/cmp_testlib.h"
 
 #include "apps/cmp_mock_srv.h"
 
 #ifndef NDEBUG /* tests need mock server, which is available only if !NDEBUG */
-
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(OSSL_CMP_ITAV)
 
 static const char *server_key_f;
 static const char *server_cert_f;
@@ -33,7 +30,7 @@ typedef struct test_fixture {
     STACK_OF(X509) *caPubs;
 } CMP_SES_TEST_FIXTURE;
 
-static OPENSSL_CTX *libctx = NULL;
+static OSSL_LIB_CTX *libctx = NULL;
 static OSSL_PROVIDER *default_null_provider = NULL, *provider = NULL;
 
 static EVP_PKEY *server_key = NULL;
@@ -95,7 +92,7 @@ static CMP_SES_TEST_FIXTURE *set_up(const char *const test_case_name)
 static int execute_exec_RR_ses_test(CMP_SES_TEST_FIXTURE *fixture)
 {
     return TEST_int_eq(fixture->expected,
-                       OSSL_CMP_exec_RR_ses(fixture->cmp_ctx) == client_cert);
+                       OSSL_CMP_exec_RR_ses(fixture->cmp_ctx) == 1);
 }
 
 static int execute_exec_GENM_ses_test(CMP_SES_TEST_FIXTURE *fixture)
@@ -229,7 +226,7 @@ static int test_exec_P10CR_ses(void)
     SETUP_TEST_FIXTURE(CMP_SES_TEST_FIXTURE, set_up);
     fixture->req_type = OSSL_CMP_P10CR;
     fixture->expected = 1;
-    if (!TEST_ptr(req = load_csr(pkcs10_f))
+    if (!TEST_ptr(req = load_csr_der(pkcs10_f))
             || !TEST_true(OSSL_CMP_CTX_set1_p10CSR(fixture->cmp_ctx, req))) {
         tear_down(fixture);
         fixture = NULL;
@@ -346,11 +343,11 @@ void cleanup_tests(void)
     EVP_PKEY_free(server_key);
     X509_free(client_cert);
     EVP_PKEY_free(client_key);
-    OPENSSL_CTX_free(libctx);
+    OSSL_LIB_CTX_free(libctx);
     return;
 }
 
-#define USAGE "server.key server.crt client.key client.crt client.csr module_name [module_conf_file]\n"
+# define USAGE "server.key server.crt client.key client.crt client.csr module_name [module_conf_file]\n"
 OPT_TEST_DECLARE_USAGE(USAGE)
 
 int setup_tests(void)
@@ -369,13 +366,13 @@ int setup_tests(void)
         return 0;
     }
 
-    if (!test_get_libctx(&libctx, &default_null_provider, &provider, 5, USAGE))
+    if (!test_arg_libctx(&libctx, &default_null_provider, &provider, 5, USAGE))
         return 0;
 
-    if (!TEST_ptr(server_key = load_pem_key(server_key_f, libctx))
-            || !TEST_ptr(server_cert = load_pem_cert(server_cert_f, libctx))
-            || !TEST_ptr(client_key = load_pem_key(client_key_f, libctx))
-            || !TEST_ptr(client_cert = load_pem_cert(client_cert_f, libctx))
+    if (!TEST_ptr(server_key = load_pkey_pem(server_key_f, libctx))
+            || !TEST_ptr(server_cert = load_cert_pem(server_cert_f, libctx))
+            || !TEST_ptr(client_key = load_pkey_pem(client_key_f, libctx))
+            || !TEST_ptr(client_cert = load_cert_pem(client_cert_f, libctx))
             || !TEST_int_eq(1, RAND_bytes_ex(libctx, ref, sizeof(ref)))) {
         cleanup_tests();
         return 0;

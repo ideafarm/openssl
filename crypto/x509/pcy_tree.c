@@ -14,10 +14,6 @@
 
 #include "pcy_local.h"
 
-DEFINE_STACK_OF(ASN1_OBJECT)
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(X509_POLICY_NODE)
-
 static void expected_print(BIO *channel,
                            X509_POLICY_LEVEL *lev, X509_POLICY_NODE *node,
                            int indent)
@@ -163,7 +159,7 @@ static int tree_init(X509_POLICY_TREE **ptree, STACK_OF(X509) *certs,
 
     /* If we get this far initialize the tree */
     if ((tree = OPENSSL_zalloc(sizeof(*tree))) == NULL) {
-        X509V3err(X509V3_F_TREE_INIT, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
         return X509_PCY_TREE_INTERNAL;
     }
 
@@ -176,7 +172,7 @@ static int tree_init(X509_POLICY_TREE **ptree, STACK_OF(X509) *certs,
      */
     if ((tree->levels = OPENSSL_zalloc(sizeof(*tree->levels)*(n+1))) == NULL) {
         OPENSSL_free(tree);
-        X509V3err(X509V3_F_TREE_INIT, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
         return X509_PCY_TREE_INTERNAL;
     }
     tree->nlevel = n+1;

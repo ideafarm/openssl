@@ -33,10 +33,11 @@
 #include <openssl/bn.h>
 #include <openssl/x509v3.h>
 
-DEFINE_STACK_OF(OCSP_CERTID)
-DEFINE_STACK_OF(CONF_VALUE)
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF_STRING()
+#if defined(__TANDEM)
+# if defined(OPENSSL_TANDEM_FLOSS)
+#  include <floss.h(floss_fork)>
+# endif
+#endif
 
 #if defined(OPENSSL_SYS_VXWORKS)
 /* not supported */
@@ -61,7 +62,7 @@ static int add_ocsp_cert(OCSP_REQUEST **req, X509 *cert,
 static int add_ocsp_serial(OCSP_REQUEST **req, char *serial,
                            const EVP_MD *cert_id_md, X509 *issuer,
                            STACK_OF(OCSP_CERTID) *ids);
-static void print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
+static int print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
                               STACK_OF(OPENSSL_STRING) *names,
                               STACK_OF(OCSP_CERTID) *ids, long nsec,
                               long maxage);
@@ -275,7 +276,7 @@ int ocsp_main(int argc, char **argv)
             OPENSSL_free(tpath);
             thost = tport = tpath = NULL;
             if (!OSSL_HTTP_parse_url(opt_arg(),
-                                     &host, &port, &path, &use_ssl)) {
+                                     &host, &port, NULL, &path, &use_ssl)) {
                 BIO_printf(bio_err, "%s Error parsing URL\n", prog);
                 goto end;
             }
@@ -404,8 +405,7 @@ int ocsp_main(int argc, char **argv)
             path = opt_arg();
             break;
         case OPT_ISSUER:
-            issuer = load_cert(opt_arg(), FORMAT_UNDEF,
-                               "issuer certificate");
+            issuer = load_cert(opt_arg(), "issuer certificate");
             if (issuer == NULL)
                 goto end;
             if (issuers == NULL) {
@@ -417,7 +417,7 @@ int ocsp_main(int argc, char **argv)
             break;
         case OPT_CERT:
             X509_free(cert);
-            cert = load_cert(opt_arg(), FORMAT_UNDEF, "certificate");
+            cert = load_cert(opt_arg(), "certificate");
             if (cert == NULL)
                 goto end;
             if (cert_id_md == NULL)
@@ -514,14 +514,17 @@ int ocsp_main(int argc, char **argv)
             break;
         }
     }
+
+    /* No extra arguments. */
+    argc = opt_num_rest();
+    if (argc != 0)
+        goto opthelp;
+
     if (trailing_md) {
         BIO_printf(bio_err, "%s: Digest must be before -cert or -serial\n",
                    prog);
         goto opthelp;
     }
-    argc = opt_num_rest();
-    if (argc != 0)
-        goto opthelp;
 
     /* Have we anything to do? */
     if (req == NULL && reqin == NULL
@@ -561,8 +564,7 @@ int ocsp_main(int argc, char **argv)
     if (rsignfile != NULL) {
         if (rkeyfile == NULL)
             rkeyfile = rsignfile;
-        rsigner = load_cert(rsignfile, FORMAT_UNDEF,
-                            "responder certificate");
+        rsigner = load_cert(rsignfile, "responder certificate");
         if (rsigner == NULL) {
             BIO_printf(bio_err, "Error loading responder certificate\n");
             goto end;
@@ -658,7 +660,7 @@ redo_accept:
     if (signfile != NULL) {
         if (keyfile == NULL)
             keyfile = signfile;
-        signer = load_cert(signfile, FORMAT_UNDEF, "signer certificate");
+        signer = load_cert(signfile, "signer certificate");
         if (signer == NULL) {
             BIO_printf(bio_err, "Error loading signer certificate\n");
             goto end;
@@ -812,7 +814,8 @@ redo_accept:
         }
     }
 
-    print_ocsp_summary(out, bs, req, reqnames, ids, nsec, maxage);
+    if (!print_ocsp_summary(out, bs, req, reqnames, ids, nsec, maxage))
+        ret = 1;
 
  end:
     ERR_print_errors(bio_err);
@@ -928,7 +931,7 @@ static int add_ocsp_serial(OCSP_REQUEST **req, char *serial,
     return 0;
 }
 
-static void print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
+static int print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
                               STACK_OF(OPENSSL_STRING) *names,
                               STACK_OF(OCSP_CERTID) *ids, long nsec,
                               long maxage)
@@ -937,10 +940,13 @@ static void print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
     const char *name;
     int i, status, reason;
     ASN1_GENERALIZEDTIME *rev, *thisupd, *nextupd;
+    int ret = 1;
 
-    if (bs == NULL || req == NULL || !sk_OPENSSL_STRING_num(names)
-        || !sk_OCSP_CERTID_num(ids))
-        return;
+    if (req == NULL || !sk_OPENSSL_STRING_num(names))
+        return 1;
+
+    if (bs == NULL || !sk_OCSP_CERTID_num(ids))
+        return 0;
 
     for (i = 0; i < sk_OCSP_CERTID_num(ids); i++) {
         id = sk_OCSP_CERTID_value(ids, i);
@@ -950,6 +956,7 @@ static void print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
         if (!OCSP_resp_find_status(bs, id, &status, &reason,
                                    &rev, &thisupd, &nextupd)) {
             BIO_puts(out, "ERROR: No Status found.\n");
+            ret = 0;
             continue;
         }
 
@@ -983,6 +990,7 @@ static void print_ocsp_summary(BIO *out, OCSP_BASICRESP *bs, OCSP_REQUEST *req,
         ASN1_GENERALIZEDTIME_print(out, rev);
         BIO_puts(out, "\n");
     }
+    return ret;
 }
 
 static void make_ocsp_response(BIO *err, OCSP_RESPONSE **resp, OCSP_REQUEST *req,

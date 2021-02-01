@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -132,7 +132,7 @@ int BN_generate_prime_ex2(BIGNUM *ret, int bits, int safe,
 
     if (bits < 2) {
         /* There are no prime numbers this small. */
-        BNerr(BN_F_BN_GENERATE_PRIME_EX2, BN_R_BITS_TOO_SMALL);
+        ERR_raise(ERR_LIB_BN, BN_R_BITS_TOO_SMALL);
         return 0;
     } else if (add == NULL && safe && bits < 6 && bits != 3) {
         /*
@@ -140,13 +140,15 @@ int BN_generate_prime_ex2(BIGNUM *ret, int bits, int safe,
          * But the following two safe primes with less than 6 bits (11, 23)
          * are unreachable for BN_rand with BN_RAND_TOP_TWO.
          */
-        BNerr(BN_F_BN_GENERATE_PRIME_EX2, BN_R_BITS_TOO_SMALL);
+        ERR_raise(ERR_LIB_BN, BN_R_BITS_TOO_SMALL);
         return 0;
     }
 
     mods = OPENSSL_zalloc(sizeof(*mods) * NUMPRIMES);
-    if (mods == NULL)
-        goto err;
+    if (mods == NULL) {
+        ERR_raise(ERR_LIB_BN, ERR_R_MALLOC_FAILURE);
+        return 0;
+    }
 
     BN_CTX_start(ctx);
     t = BN_CTX_get(ctx);

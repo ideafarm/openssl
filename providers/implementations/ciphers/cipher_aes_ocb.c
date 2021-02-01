@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,6 +15,7 @@
 #include "internal/deprecated.h"
 
 #include "cipher_aes_ocb.h"
+#include "prov/providercommon.h"
 #include "prov/providercommonerr.h"
 #include "prov/ciphercommon_aead.h"
 #include "prov/implementations.h"
@@ -103,33 +104,36 @@ static ossl_inline int aes_generic_ocb_copy_ctx(PROV_AES_OCB_CTX *dst,
 static int aes_ocb_init(void *vctx, const unsigned char *key, size_t keylen,
                         const unsigned char *iv, size_t ivlen, int enc)
 {
-   PROV_AES_OCB_CTX *ctx = (PROV_AES_OCB_CTX *)vctx;
+    PROV_AES_OCB_CTX *ctx = (PROV_AES_OCB_CTX *)vctx;
 
-   ctx->aad_buf_len = 0;
-   ctx->data_buf_len = 0;
-   ctx->base.enc = enc;
+    if (!ossl_prov_is_running())
+        return 0;
 
-   if (iv != NULL) {
-       if (ivlen != ctx->base.ivlen) {
-           /* IV len must be 1 to 15 */
-           if (ivlen < OCB_MIN_IV_LEN || ivlen > OCB_MAX_IV_LEN) {
-               ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
-               return 0;
-           }
-           ctx->base.ivlen = ivlen;
-       }
-       if (!cipher_generic_initiv(&ctx->base, iv, ivlen))
-           return 0;
-       ctx->iv_state = IV_STATE_BUFFERED;
-   }
-   if (key != NULL) {
-       if (keylen != ctx->base.keylen) {
-           ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY_LENGTH);
-           return 0;
-       }
-       return ctx->base.hw->init(&ctx->base, key, keylen);
-   }
-   return 1;
+    ctx->aad_buf_len = 0;
+    ctx->data_buf_len = 0;
+    ctx->base.enc = enc;
+
+    if (iv != NULL) {
+        if (ivlen != ctx->base.ivlen) {
+            /* IV len must be 1 to 15 */
+            if (ivlen < OCB_MIN_IV_LEN || ivlen > OCB_MAX_IV_LEN) {
+                ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
+                return 0;
+            }
+            ctx->base.ivlen = ivlen;
+        }
+        if (!ossl_cipher_generic_initiv(&ctx->base, iv, ivlen))
+            return 0;
+        ctx->iv_state = IV_STATE_BUFFERED;
+    }
+    if (key != NULL) {
+        if (keylen != ctx->base.keylen) {
+            ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_KEY_LENGTH);
+            return 0;
+        }
+        return ctx->base.hw->init(&ctx->base, key, keylen);
+    }
+    return 1;
 }
 
 static int aes_ocb_einit(void *vctx, const unsigned char *key, size_t keylen,
@@ -173,7 +177,8 @@ static int aes_ocb_block_update_internal(PROV_AES_OCB_CTX *ctx,
         }
         *bufsz = 0;
         outlint = AES_BLOCK_SIZE;
-        out += AES_BLOCK_SIZE;
+        if (out != NULL)
+            out += AES_BLOCK_SIZE;
     }
     if (nextblocks > 0) {
         outlint += nextblocks;
@@ -254,6 +259,9 @@ static int aes_ocb_block_final(void *vctx, unsigned char *out, size_t *outl,
 {
     PROV_AES_OCB_CTX *ctx = (PROV_AES_OCB_CTX *)vctx;
 
+    if (!ossl_prov_is_running())
+        return 0;
+
     /* If no block_update has run then the iv still needs to be set */
     if (!ctx->key_set || !update_iv(ctx))
         return 0;
@@ -293,11 +301,15 @@ static int aes_ocb_block_final(void *vctx, unsigned char *out, size_t *outl,
 static void *aes_ocb_newctx(void *provctx, size_t kbits, size_t blkbits,
                             size_t ivbits, unsigned int mode, uint64_t flags)
 {
-    PROV_AES_OCB_CTX *ctx = OPENSSL_zalloc(sizeof(*ctx));
+    PROV_AES_OCB_CTX *ctx;
 
+    if (!ossl_prov_is_running())
+        return NULL;
+
+    ctx = OPENSSL_zalloc(sizeof(*ctx));
     if (ctx != NULL) {
-        cipher_generic_initkey(ctx, kbits, blkbits, ivbits, mode, flags,
-                               PROV_CIPHER_HW_aes_ocb(kbits), NULL);
+        ossl_cipher_generic_initkey(ctx, kbits, blkbits, ivbits, mode, flags,
+                                    ossl_prov_cipher_hw_aes_ocb(kbits), NULL);
         ctx->taglen = OCB_DEFAULT_TAG_LEN;
     }
     return ctx;
@@ -309,7 +321,7 @@ static void aes_ocb_freectx(void *vctx)
 
     if (ctx != NULL) {
         aes_generic_ocb_cleanup(ctx);
-        cipher_generic_reset_ctx((PROV_CIPHER_CTX *)vctx);
+        ossl_cipher_generic_reset_ctx((PROV_CIPHER_CTX *)vctx);
         OPENSSL_clear_free(ctx,  sizeof(*ctx));
     }
 }
@@ -317,8 +329,12 @@ static void aes_ocb_freectx(void *vctx)
 static void *aes_ocb_dupctx(void *vctx)
 {
     PROV_AES_OCB_CTX *in = (PROV_AES_OCB_CTX *)vctx;
-    PROV_AES_OCB_CTX *ret = OPENSSL_malloc(sizeof(*ret));
+    PROV_AES_OCB_CTX *ret;
 
+    if (!ossl_prov_is_running())
+        return NULL;
+
+    ret = OPENSSL_malloc(sizeof(*ret));
     if (ret == NULL) {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
         return NULL;
@@ -416,7 +432,7 @@ static int aes_ocb_get_ctx_params(void *vctx, OSSL_PARAM params[])
             return 0;
         }
     }
-    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_IV_STATE);
+    p = OSSL_PARAM_locate(params, OSSL_CIPHER_PARAM_UPDATED_IV);
     if (p != NULL) {
         if (ctx->base.ivlen > p->data_size) {
             ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_IV_LENGTH);
@@ -448,7 +464,7 @@ static const OSSL_PARAM cipher_ocb_known_gettable_ctx_params[] = {
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_IVLEN, NULL),
     OSSL_PARAM_size_t(OSSL_CIPHER_PARAM_AEAD_TAGLEN, NULL),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV, NULL, 0),
-    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_IV_STATE, NULL, 0),
+    OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_UPDATED_IV, NULL, 0),
     OSSL_PARAM_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, NULL, 0),
     OSSL_PARAM_END
 };
@@ -473,6 +489,9 @@ static int aes_ocb_cipher(void *vctx, unsigned char *out, size_t *outl,
 {
     PROV_AES_OCB_CTX *ctx = (PROV_AES_OCB_CTX *)vctx;
 
+    if (!ossl_prov_is_running())
+        return 0;
+
     if (outsize < inl) {
         ERR_raise(ERR_LIB_PROV, PROV_R_OUTPUT_BUFFER_TOO_SMALL);
         return 0;
@@ -491,8 +510,8 @@ static int aes_ocb_cipher(void *vctx, unsigned char *out, size_t *outl,
 static OSSL_FUNC_cipher_get_params_fn aes_##kbits##_##mode##_get_params;       \
 static int aes_##kbits##_##mode##_get_params(OSSL_PARAM params[])              \
 {                                                                              \
-    return cipher_generic_get_params(params, EVP_CIPH_##UCMODE##_MODE,         \
-                                     flags, kbits, blkbits, ivbits);           \
+    return ossl_cipher_generic_get_params(params, EVP_CIPH_##UCMODE##_MODE,    \
+                                          flags, kbits, blkbits, ivbits);      \
 }                                                                              \
 static OSSL_FUNC_cipher_newctx_fn aes_##kbits##_##mode##_newctx;               \
 static void *aes_##kbits##_##mode##_newctx(void *provctx)                      \
@@ -500,7 +519,7 @@ static void *aes_##kbits##_##mode##_newctx(void *provctx)                      \
     return aes_##mode##_newctx(provctx, kbits, blkbits, ivbits,                \
                                EVP_CIPH_##UCMODE##_MODE, flags);               \
 }                                                                              \
-const OSSL_DISPATCH aes##kbits##mode##_functions[] = {                         \
+const OSSL_DISPATCH ossl_##aes##kbits##mode##_functions[] = {                  \
     { OSSL_FUNC_CIPHER_NEWCTX,                                                 \
         (void (*)(void))aes_##kbits##_##mode##_newctx },                       \
     { OSSL_FUNC_CIPHER_ENCRYPT_INIT, (void (*)(void))aes_##mode##_einit },     \
@@ -517,7 +536,7 @@ const OSSL_DISPATCH aes##kbits##mode##_functions[] = {                         \
     { OSSL_FUNC_CIPHER_SET_CTX_PARAMS,                                         \
         (void (*)(void))aes_##mode##_set_ctx_params },                         \
     { OSSL_FUNC_CIPHER_GETTABLE_PARAMS,                                        \
-        (void (*)(void))cipher_generic_gettable_params },                      \
+        (void (*)(void))ossl_cipher_generic_gettable_params },                 \
     { OSSL_FUNC_CIPHER_GETTABLE_CTX_PARAMS,                                    \
         (void (*)(void))cipher_ocb_gettable_ctx_params },                      \
     { OSSL_FUNC_CIPHER_SETTABLE_CTX_PARAMS,                                    \

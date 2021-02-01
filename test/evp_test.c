@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,6 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 
+#define OPENSSL_SUPPRESS_DEPRECATED /* EVP_PKEY_new_CMAC_key */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -21,13 +22,14 @@
 #include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <openssl/core_names.h>
+#include <openssl/fips_names.h>
 #include "internal/numbers.h"
 #include "internal/nelem.h"
 #include "crypto/evp.h"
 #include "testutil.h"
-#include "evp_test.h"
 
-DEFINE_STACK_OF_STRING()
+typedef struct evp_test_buffer_st EVP_TEST_BUFFER;
+DEFINE_STACK_OF(EVP_TEST_BUFFER)
 
 #define AAD_NUM 4
 
@@ -74,7 +76,7 @@ typedef enum OPTION_choice {
 } OPTION_CHOICE;
 
 static OSSL_PROVIDER *prov_null = NULL;
-static OPENSSL_CTX *libctx = NULL;
+static OSSL_LIB_CTX *libctx = NULL;
 
 /* List of public and private keys */
 static KEY_LIST *private_keys;
@@ -763,7 +765,7 @@ static int cipher_test_enc(EVP_TEST *t, int enc,
     if (expected->iv != NULL) {
         /* Some (e.g., GCM) tests use IVs longer than EVP_MAX_IV_LENGTH. */
         unsigned char iv[128];
-        if (!TEST_true(EVP_CIPHER_CTX_get_iv_state(ctx_base, iv, sizeof(iv)))
+        if (!TEST_true(EVP_CIPHER_CTX_get_updated_iv(ctx_base, iv, sizeof(iv)))
                 || ((EVP_CIPHER_flags(expected->cipher) & EVP_CIPH_CUSTOM_IV) == 0
                     && !TEST_mem_eq(expected->iv, expected->iv_len, iv,
                                     expected->iv_len))) {
@@ -1151,6 +1153,14 @@ static int mac_test_run_pkey(EVP_TEST *t)
                   OBJ_nid2sn(expected->type), expected->alg);
 
     if (expected->type == EVP_PKEY_CMAC) {
+#ifdef OPENSSL_NO_DEPRECATED_3_0
+        TEST_info("skipping, PKEY CMAC '%s' is disabled", expected->alg);
+        t->skip = 1;
+        t->err = NULL;
+        goto err;
+#else
+        OSSL_LIB_CTX *tmpctx;
+
         if (expected->alg != NULL && is_cipher_disabled(expected->alg)) {
             TEST_info("skipping, PKEY CMAC '%s' is disabled", expected->alg);
             t->skip = 1;
@@ -1161,15 +1171,15 @@ static int mac_test_run_pkey(EVP_TEST *t)
             t->err = "MAC_KEY_CREATE_ERROR";
             goto err;
         }
-        key = EVP_PKEY_new_CMAC_key_with_libctx(expected->key,
-                                                expected->key_len,
-                                                EVP_CIPHER_name(cipher),
-                                                libctx, NULL);
+        tmpctx = OSSL_LIB_CTX_set0_default(libctx);
+        key = EVP_PKEY_new_CMAC_key(NULL, expected->key, expected->key_len,
+                                    cipher);
+        OSSL_LIB_CTX_set0_default(tmpctx);
+#endif
     } else {
-        key = EVP_PKEY_new_raw_private_key_with_libctx(libctx,
-                                                       OBJ_nid2sn(expected->type),
-                                                       NULL, expected->key,
-                                                       expected->key_len);
+        key = EVP_PKEY_new_raw_private_key_ex(libctx,
+                                              OBJ_nid2sn(expected->type), NULL,
+                                              expected->key, expected->key_len);
     }
     if (key == NULL) {
         t->err = "MAC_KEY_CREATE_ERROR";
@@ -1189,7 +1199,7 @@ static int mac_test_run_pkey(EVP_TEST *t)
         t->err = "INTERNAL_ERROR";
         goto err;
     }
-    if (!EVP_DigestSignInit_with_libctx(mctx, &pctx, mdname, libctx, NULL, key)) {
+    if (!EVP_DigestSignInit_ex(mctx, &pctx, mdname, libctx, NULL, key)) {
         t->err = "DIGESTSIGNINIT_ERROR";
         goto err;
     }
@@ -1629,8 +1639,11 @@ static int pderive_test_parse(EVP_TEST *t,
         EVP_PKEY *peer;
         if (find_key(&peer, value, public_keys) == 0)
             return -1;
-        if (EVP_PKEY_derive_set_peer(kdata->ctx, peer) <= 0)
-            return -1;
+        if (EVP_PKEY_derive_set_peer(kdata->ctx, peer) <= 0) {
+            t->err = "DERIVE_SET_PEER_ERROR";
+            return 1;
+        }
+        t->err = NULL;
         return 1;
     }
     if (strcmp(keyword, "SharedSecret") == 0)
@@ -1843,9 +1856,9 @@ static int pbe_test_run(EVP_TEST *t)
     PBE_DATA *expected = t->data;
     unsigned char *key;
     EVP_MD *fetched_digest = NULL;
-    OPENSSL_CTX *save_libctx;
+    OSSL_LIB_CTX *save_libctx;
 
-    save_libctx = OPENSSL_CTX_set0_default(libctx);
+    save_libctx = OSSL_LIB_CTX_set0_default(libctx);
 
     if (!TEST_ptr(key = OPENSSL_malloc(expected->key_len))) {
         t->err = "INTERNAL_ERROR";
@@ -1891,7 +1904,7 @@ static int pbe_test_run(EVP_TEST *t)
 err:
     EVP_MD_free(fetched_digest);
     OPENSSL_free(key);
-    OPENSSL_CTX_set0_default(save_libctx);
+    OSSL_LIB_CTX_set0_default(save_libctx);
     return 1;
 }
 
@@ -2423,11 +2436,12 @@ static int kdf_test_ctrl(EVP_TEST *t, EVP_KDF_CTX *kctx,
             t->skip = 1;
         }
     }
-    if (p != NULL && strcmp(name, "cipher") == 0) {
-        if (is_cipher_disabled(p)) {
-            TEST_info("skipping, '%s' is disabled", p);
-            t->skip = 1;
-        }
+    if (p != NULL
+        && (strcmp(name, "cipher") == 0
+            || strcmp(name, "cekalg") == 0)
+        && is_cipher_disabled(p)) {
+        TEST_info("skipping, '%s' is disabled", p);
+        t->skip = 1;
     }
     OPENSSL_free(name);
     return 1;
@@ -2893,13 +2907,13 @@ static int digestsigver_test_parse(EVP_TEST *t,
             return 1;
         }
         if (mdata->is_verify) {
-            if (!EVP_DigestVerifyInit_with_libctx(mdata->ctx, &mdata->pctx,
-                                                  name, libctx, NULL, pkey))
+            if (!EVP_DigestVerifyInit_ex(mdata->ctx, &mdata->pctx, name, libctx,
+                                         NULL, pkey))
                 t->err = "DIGESTVERIFYINIT_ERROR";
             return 1;
         }
-        if (!EVP_DigestSignInit_with_libctx(mdata->ctx, &mdata->pctx,
-                                            name, libctx, NULL, pkey))
+        if (!EVP_DigestSignInit_ex(mdata->ctx, &mdata->pctx, name, libctx, NULL,
+                                   pkey))
             t->err = "DIGESTSIGNINIT_ERROR";
         return 1;
     }
@@ -3256,8 +3270,7 @@ static int key_unsupported(void)
     long err = ERR_peek_last_error();
 
     if (ERR_GET_LIB(err) == ERR_LIB_EVP
-            && (ERR_GET_REASON(err) == EVP_R_UNSUPPORTED_ALGORITHM
-                || ERR_GET_REASON(err) == EVP_R_FETCH_FAILED)) {
+            && (ERR_GET_REASON(err) == EVP_R_UNSUPPORTED_ALGORITHM)) {
         ERR_clear_error();
         return 1;
     }
@@ -3285,6 +3298,35 @@ static char *take_value(PAIR *pp)
     pp->value = NULL;
     return p;
 }
+
+#if !defined(OPENSSL_NO_FIPS_SECURITYCHECKS)
+static int securitycheck_enabled(void)
+{
+    static int enabled = -1;
+
+    if (enabled == -1) {
+        if (OSSL_PROVIDER_available(libctx, "fips")) {
+            OSSL_PARAM params[2];
+            OSSL_PROVIDER *prov = NULL;
+            int check = 1;
+
+            prov = OSSL_PROVIDER_load(libctx, "fips");
+            if (prov != NULL) {
+                params[0] =
+                    OSSL_PARAM_construct_int(OSSL_PROV_PARAM_SECURITY_CHECKS,
+                                             &check);
+                params[1] = OSSL_PARAM_construct_end();
+                OSSL_PROVIDER_get_params(prov, params);
+                OSSL_PROVIDER_unload(prov);
+            }
+            enabled = check;
+            return enabled;
+        }
+        enabled = 0;
+    }
+    return enabled;
+}
+#endif
 
 /*
  * Return 1 if one of the providers named in the string is available.
@@ -3387,11 +3429,11 @@ start:
             return 0;
         }
         if (klist == &private_keys)
-            pkey = EVP_PKEY_new_raw_private_key_with_libctx(libctx, strnid, NULL,
-                                                            keybin, keylen);
+            pkey = EVP_PKEY_new_raw_private_key_ex(libctx, strnid, NULL, keybin,
+                                                   keylen);
         else
-            pkey = EVP_PKEY_new_raw_public_key_with_libctx(libctx, strnid, NULL,
-                                                           keybin, keylen);
+            pkey = EVP_PKEY_new_raw_public_key_ex(libctx, strnid, NULL, keybin,
+                                                  keylen);
         if (pkey == NULL && !key_unsupported()) {
             TEST_info("Can't read %s data", pp->key);
             OPENSSL_free(keybin);
@@ -3443,7 +3485,18 @@ start:
     }
 
     for (pp++, i = 1; i < (t->s.numpairs - skip_availablein); pp++, i++) {
-        if (strcmp(pp->key, "Availablein") == 0) {
+        if (strcmp(pp->key, "Securitycheck") == 0) {
+#if defined(OPENSSL_NO_FIPS_SECURITYCHECKS)
+#else
+            if (!securitycheck_enabled())
+#endif
+            {
+                TEST_info("skipping, Securitycheck is disabled: %s:%d",
+                          t->s.test_file, t->s.start);
+                t->skip = 1;
+                return 0;
+            }
+        } else if (strcmp(pp->key, "Availablein") == 0) {
             TEST_info("Line %d: 'Availablein' should be the first option",
                       t->s.curr);
             return 0;
@@ -3549,22 +3602,12 @@ int setup_tests(void)
     }
 
     /*
+     * Load the provider via configuration into the created library context.
      * Load the 'null' provider into the default library context to ensure that
      * the the tests do not fallback to using the default provider.
      */
-    prov_null = OSSL_PROVIDER_load(NULL, "null");
-    if (prov_null == NULL) {
-        opt_printf_stderr("Failed to load null provider into default libctx\n");
+    if (!test_get_libctx(&libctx, &prov_null, config_file, NULL, NULL))
         return 0;
-    }
-
-    /* load the provider via configuration into the created library context */
-    libctx = OPENSSL_CTX_new();
-    if (libctx == NULL
-        || !OPENSSL_CTX_load_config(libctx, config_file)) {
-        TEST_error("Failed to load config %s\n", config_file);
-        return 0;
-    }
 
     n = test_get_argument_count();
     if (n == 0)
@@ -3577,7 +3620,7 @@ int setup_tests(void)
 void cleanup_tests(void)
 {
     OSSL_PROVIDER_unload(prov_null);
-    OPENSSL_CTX_free(libctx);
+    OSSL_LIB_CTX_free(libctx);
 }
 
 #define STR_STARTS_WITH(str, pre) strncasecmp(pre, str, strlen(pre)) == 0
@@ -3623,10 +3666,6 @@ static int is_digest_disabled(const char *name)
 
 static int is_pkey_disabled(const char *name)
 {
-#ifdef OPENSSL_NO_RSA
-    if (STR_STARTS_WITH(name, "RSA"))
-        return 1;
-#endif
 #ifdef OPENSSL_NO_EC
     if (STR_STARTS_WITH(name, "EC"))
         return 1;
@@ -3669,10 +3708,6 @@ static int is_kdf_disabled(const char *name)
     if (STR_ENDS_WITH(name, "SCRYPT"))
         return 1;
 #endif
-#ifdef OPENSSL_NO_CMS
-    if (strcasecmp(name, "X942KDF") == 0)
-        return 1;
-#endif /* OPENSSL_NO_CMS */
     return 0;
 }
 
@@ -3704,6 +3739,8 @@ static int is_cipher_disabled(const char *name)
 #endif
 #ifdef OPENSSL_NO_DES
     if (STR_STARTS_WITH(name, "DES"))
+        return 1;
+    if (STR_ENDS_WITH(name, "3DESwrap"))
         return 1;
 #endif
 #ifdef OPENSSL_NO_OCB

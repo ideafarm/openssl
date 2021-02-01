@@ -193,9 +193,18 @@ further details.
 Gets or sets the name of the OAEP digest algorithm used when OAEP padding is in
 use.
 
+=item "digest" (B<OSSL_ASYM_CIPHER_PARAM_DIGEST>) <UTF8 string>
+
+Gets or sets the name of the digest algorithm used by the algorithm (where
+applicable).
+
 =item "digest-props" (B<OSSL_ASYM_CIPHER_PARAM_OAEP_DIGEST_PROPS>) <UTF8 string>
 
 Gets or sets the properties to use when fetching the OAEP digest algorithm.
+
+=item "digest-props" (B<OSSL_ASYM_CIPHER_PARAM_DIGEST_PROPS>) <UTF8 string>
+
+Gets or sets the properties to use when fetching the cipher digest algorithm.
 
 =item "mgf1-digest" (B<OSSL_ASYM_CIPHER_PARAM_MGF1_DIGEST>) <UTF8 string>
 
@@ -209,10 +218,6 @@ Gets or sets the properties to use when fetching the MGF1 digest algorithm.
 =item "oaep-label" (B<OSSL_ASYM_CIPHER_PARAM_OAEP_LABEL>) <octet string>
 
 Gets or sets the OAEP label used when OAEP padding is in use.
-
-=item "oaep-label-len" (B<OSSL_ASYM_CIPHER_PARAM_OAEP_LABEL_LEN>) <size_t>
-
-Gets the length of an OAEP label when OAEP padding is in use.
 
 =item "tls-client-version" (B<OSSL_ASYM_CIPHER_PARAM_TLS_CLIENT_VERSION>) <unsigned integer>
 
@@ -249,7 +254,7 @@ The provider ASYM_CIPHER interface was introduced in OpenSSL 3.0.
 
 =head1 COPYRIGHT
 
-Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

@@ -9,15 +9,9 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "cmp_testlib.h"
+#include "helpers/cmp_testlib.h"
 
 #include <openssl/x509_vfy.h>
-
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(ASN1_UTF8STRING)
-DEFINE_STACK_OF(X509_EXTENSION)
-DEFINE_STACK_OF(OSSL_CMP_ITAV)
-DEFINE_STACK_OF(POLICYINFO)
 
 typedef struct test_fixture {
     const char *test_case_name;
@@ -149,7 +143,7 @@ static int execute_CTX_print_errors_test(OSSL_CMP_CTX_TEST_FIXTURE *fixture)
         res = 0;
 
 # ifndef OPENSSL_NO_STDIO
-    CMPerr(0, CMP_R_MULTIPLE_SAN_SOURCES);
+    ERR_raise(ERR_LIB_CMP, CMP_R_MULTIPLE_SAN_SOURCES);
     OSSL_CMP_CTX_print_errors(ctx); /* should print above error to STDERR */
 # endif
 
@@ -159,9 +153,9 @@ static int execute_CTX_print_errors_test(OSSL_CMP_CTX_TEST_FIXTURE *fixture)
     if (!TEST_true(ctx->log_cb == msg_total_size_log_cb)) {
         res = 0;
     } else {
-        CMPerr(0, CMP_R_INVALID_ARGS);
+        ERR_raise(ERR_LIB_CMP, CMP_R_INVALID_ARGS);
         base_err_msg_size = strlen("INVALID_ARGS");
-        CMPerr(0, CMP_R_NULL_ARGUMENT);
+        ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT);
         base_err_msg_size += strlen("NULL_ARGUMENT");
         expected_size = base_err_msg_size;
         ossl_cmp_add_error_data("data1"); /* should prepend separator " : " */
@@ -174,7 +168,7 @@ static int execute_CTX_print_errors_test(OSSL_CMP_CTX_TEST_FIXTURE *fixture)
         if (!TEST_int_eq(msg_total_size, expected_size))
             res = 0;
 
-        CMPerr(0, CMP_R_INVALID_ARGS);
+        ERR_raise(ERR_LIB_CMP, CMP_R_INVALID_ARGS);
         base_err_msg_size = strlen("INVALID_ARGS") + strlen(" : ");
         expected_size = base_err_msg_size;
         while (expected_size < 4096) { /* force split */
@@ -504,7 +498,7 @@ static X509_STORE *X509_STORE_new_1(void)
 
 #define RET_IF_NULL_ARG(ctx, ret) \
     if (ctx == NULL) { \
-        CMPerr(0, CMP_R_NULL_ARGUMENT); \
+        ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT); \
         return ret; \
     }
 

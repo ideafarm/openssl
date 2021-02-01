@@ -10,20 +10,23 @@
 
 #include <openssl/err.h>
 #include <openssl/encodererr.h>
+#include "crypto/encodererr.h"
 
 #ifndef OPENSSL_NO_ERR
 
 static const ERR_STRING_DATA OSSL_ENCODER_str_reasons[] = {
-    {ERR_PACK(ERR_LIB_OSSL_ENCODER, 0, OSSL_ENCODER_R_INCORRECT_PROPERTY_QUERY),
-     "incorrect property query"},
     {ERR_PACK(ERR_LIB_OSSL_ENCODER, 0, OSSL_ENCODER_R_ENCODER_NOT_FOUND),
-     "encoder not found"},
+    "encoder not found"},
+    {ERR_PACK(ERR_LIB_OSSL_ENCODER, 0, OSSL_ENCODER_R_INCORRECT_PROPERTY_QUERY),
+    "incorrect property query"},
+    {ERR_PACK(ERR_LIB_OSSL_ENCODER, 0, OSSL_ENCODER_R_MISSING_GET_PARAMS),
+    "missing get params"},
     {0, NULL}
 };
 
 #endif
 
-int ERR_load_OSSL_ENCODER_strings(void)
+int err_load_OSSL_ENCODER_strings_int(void)
 {
 #ifndef OPENSSL_NO_ERR
     if (ERR_reason_error_string(OSSL_ENCODER_str_reasons[0].error) == NULL)

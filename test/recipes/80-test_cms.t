@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2015-2020 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -45,8 +45,11 @@ my $provname = 'default';
 my $datadir = srctop_dir("test", "recipes", "80-test_cms_data");
 my $smdir    = srctop_dir("test", "smime-certs");
 my $smcont   = srctop_file("test", "smcont.txt");
+my $smcont_zero = srctop_file("test", "smcont_zero.txt");
 my ($no_des, $no_dh, $no_dsa, $no_ec, $no_ec2m, $no_rc2, $no_zlib)
     = disabled qw/des dh dsa ec ec2m rc2 zlib/;
+
+$no_rc2 = 1 if disabled("legacy");
 
 plan tests =>
     ($no_fips ? 0 : 1)          # FIPS install test
@@ -161,12 +164,21 @@ my @smime_pkcs7_tests = (
     ],
 
     [ "signed content S/MIME format, RSA key SHA1",
-      [ "{cmd1}", @prov, "-sign", "-in", $smcont, "-md", "sha1",
+      [ "{cmd1}", @defaultprov, "-sign", "-in", $smcont, "-md", "sha1",
         "-certfile", catfile($smdir, "smroot.pem"),
         "-signer", catfile($smdir, "smrsa1.pem"), "-out", "{output}.cms" ],
       [ "{cmd2}", @prov, "-verify", "-in", "{output}.cms",
         "-CAfile", catfile($smdir, "smroot.pem"), "-out", "{output}.txt" ],
       \&final_compare
+    ],
+
+    [ "signed zero-length content S/MIME format, RSA key SHA1",
+      [ "{cmd1}", @defaultprov, "-sign", "-in", $smcont_zero, "-md", "sha1",
+        "-certfile", catfile($smdir, "smroot.pem"),
+        "-signer", catfile($smdir, "smrsa1.pem"), "-out", "{output}.cms" ],
+      [ "{cmd2}", @prov, "-verify", "-in", "{output}.cms",
+        "-CAfile", catfile($smdir, "smroot.pem"), "-out", "{output}.txt" ],
+      \&zero_compare
     ],
 
     [ "signed content test streaming S/MIME format, 2 DSA and 2 RSA keys",
@@ -298,12 +310,24 @@ my @smime_cms_tests = (
       \&final_compare
     ],
 
-    [ "enveloped content test streaming PEM format, KEK",
+    [ "enveloped content test streaming PEM format, AES-256-CBC cipher, KEK",
       [ "{cmd1}", @prov, "-encrypt", "-in", $smcont, "-outform", "PEM", "-aes128",
         "-stream", "-out", "{output}.cms",
         "-secretkey", "000102030405060708090A0B0C0D0E0F",
         "-secretkeyid", "C0FEE0" ],
       [ "{cmd2}", @prov, "-decrypt", "-in", "{output}.cms", "-out", "{output}.txt",
+        "-inform", "PEM",
+        "-secretkey", "000102030405060708090A0B0C0D0E0F",
+        "-secretkeyid", "C0FEE0" ],
+      \&final_compare
+    ],
+
+    [ "enveloped content test streaming PEM format, AES-256-GCM cipher, KEK",
+      [ "{cmd1}", @prov, "-encrypt", "-in", $smcont, "-outform", "PEM", "-aes-128-gcm",
+        "-stream", "-out", "{output}.cms",
+        "-secretkey", "000102030405060708090A0B0C0D0E0F",
+        "-secretkeyid", "C0FEE0" ],
+      [ "{cmd2}", "-decrypt", "-in", "{output}.cms", "-out", "{output}.txt",
         "-inform", "PEM",
         "-secretkey", "000102030405060708090A0B0C0D0E0F",
         "-secretkeyid", "C0FEE0" ],
@@ -373,7 +397,6 @@ my @smime_cms_tests = (
         "-out", "{output}.txt" ],
       \&final_compare
     ],
-
 );
 
 my @smime_cms_cades_tests = (
@@ -560,12 +583,21 @@ my @smime_cms_param_tests = (
       \&final_compare
     ],
 
-    [ "enveloped content test streaming S/MIME format, ECDH, AES128, SHA256 KDF",
+    [ "enveloped content test streaming S/MIME format, ECDH, AES-128-CBC, SHA256 KDF",
       [ "{cmd1}", @prov, "-encrypt", "-in", $smcont,
         "-stream", "-out", "{output}.cms",
         "-recip", catfile($smdir, "smec1.pem"), "-aes128",
         "-keyopt", "ecdh_kdf_md:sha256" ],
       [ "{cmd2}", @prov, "-decrypt", "-recip", catfile($smdir, "smec1.pem"),
+        "-in", "{output}.cms", "-out", "{output}.txt" ],
+      \&final_compare
+    ],
+
+    [ "enveloped content test streaming S/MIME format, ECDH, AES-128-GCM cipher, SHA256 KDF",
+      [ "{cmd1}", @prov, "-encrypt", "-in", $smcont,
+        "-stream", "-out", "{output}.cms",
+        "-recip", catfile($smdir, "smec1.pem"), "-aes-128-gcm", "-keyopt", "ecdh_kdf_md:sha256" ],
+      [ "{cmd2}", "-decrypt", "-recip", catfile($smdir, "smec1.pem"),
         "-in", "{output}.cms", "-out", "{output}.txt" ],
       \&final_compare
     ],
@@ -578,18 +610,16 @@ my @smime_cms_param_tests = (
       [ "{cmd2}", @prov, "-decrypt", "-recip", catfile($smdir, "smec2.pem"),
         "-in", "{output}.cms", "-out", "{output}.txt" ],
       \&final_compare
-    ]
+    ],
 
-    # TODO(3.0) Add this test back in when "dhpublicnumber" is supported
-    # in the keymanger.
-    #[ "enveloped content test streaming S/MIME format, X9.42 DH",
-    #  [ "{cmd1}", @prov, "-encrypt", "-in", $smcont,
-    #    "-stream", "-out", "{output}.cms",
-    #    "-recip", catfile($smdir, "smdh.pem"), "-aes128" ],
-    #  [ "{cmd2}", "-decrypt", "-recip", catfile($smdir, "smdh.pem"),
-    #    "-in", "{output}.cms", "-out", "{output}.txt" ],
-    #  \&final_compare
-    #]
+    [ "enveloped content test streaming S/MIME format, X9.42 DH",
+      [ "{cmd1}", @prov, "-encrypt", "-in", $smcont,
+        "-stream", "-out", "{output}.cms",
+        "-recip", catfile($smdir, "smdh.pem"), "-aes128" ],
+      [ "{cmd2}", @prov, "-decrypt", "-recip", catfile($smdir, "smdh.pem"),
+        "-in", "{output}.cms", "-out", "{output}.txt" ],
+      \&final_compare
+    ]
 );
 
 my @contenttype_cms_test = (
@@ -657,6 +687,13 @@ sub final_compare {
 
     diag "Comparing $smcont with $opts{output}.txt";
     return compare_text($smcont, "$opts{output}.txt") == 0;
+}
+
+sub zero_compare {
+    my %opts = @_;
+
+    diag "Checking for zero-length file";
+    return (-e "$opts{output}.txt" && -z "$opts{output}.txt");
 }
 
 subtest "CMS => PKCS#7 compatibility tests\n" => sub {

@@ -12,10 +12,6 @@
 #include <openssl/pkcs12.h>
 #include "crypto/x509.h" /* for X509_add_cert_new() */
 
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(PKCS7)
-DEFINE_STACK_OF(PKCS12_SAFEBAG)
-
 /* Simplified PKCS#12 routines */
 
 static int parse_pk12(PKCS12 *p12, const char *pass, int passlen,
@@ -48,8 +44,7 @@ int PKCS12_parse(PKCS12 *p12, const char *pass, EVP_PKEY **pkey, X509 **cert,
     /* Check for NULL PKCS12 structure */
 
     if (p12 == NULL) {
-        PKCS12err(PKCS12_F_PKCS12_PARSE,
-                  PKCS12_R_INVALID_NULL_PKCS12_POINTER);
+        ERR_raise(ERR_LIB_PKCS12, PKCS12_R_INVALID_NULL_PKCS12_POINTER);
         return 0;
     }
 
@@ -63,28 +58,33 @@ int PKCS12_parse(PKCS12 *p12, const char *pass, EVP_PKEY **pkey, X509 **cert,
      */
 
     if (pass == NULL || *pass == '\0') {
-        if (PKCS12_verify_mac(p12, NULL, 0))
+        if (!PKCS12_mac_present(p12)
+            || PKCS12_verify_mac(p12, NULL, 0))
             pass = NULL;
         else if (PKCS12_verify_mac(p12, "", 0))
             pass = "";
         else {
-            PKCS12err(PKCS12_F_PKCS12_PARSE, PKCS12_R_MAC_VERIFY_FAILURE);
+            ERR_raise(ERR_LIB_PKCS12, PKCS12_R_MAC_VERIFY_FAILURE);
             goto err;
         }
     } else if (!PKCS12_verify_mac(p12, pass, -1)) {
-        PKCS12err(PKCS12_F_PKCS12_PARSE, PKCS12_R_MAC_VERIFY_FAILURE);
+        ERR_raise(ERR_LIB_PKCS12, PKCS12_R_MAC_VERIFY_FAILURE);
         goto err;
     }
 
     /* If needed, allocate stack for other certificates */
     if ((cert != NULL || ca != NULL)
             && (ocerts = sk_X509_new_null()) == NULL) {
-        PKCS12err(PKCS12_F_PKCS12_PARSE, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_PKCS12, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (!parse_pk12(p12, pass, -1, pkey, ocerts)) {
-        PKCS12err(PKCS12_F_PKCS12_PARSE, PKCS12_R_PARSE_ERROR);
+        int err = ERR_peek_last_error();
+
+        if (ERR_GET_LIB(err) != ERR_LIB_EVP
+                && ERR_GET_REASON(err) != EVP_R_UNSUPPORTED_ALGORITHM)
+            ERR_raise(ERR_LIB_PKCS12, PKCS12_R_PARSE_ERROR);
         goto err;
     }
 

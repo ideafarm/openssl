@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -25,11 +25,6 @@
 #include "s_apps.h"
 
 #define COOKIE_SECRET_LENGTH    16
-
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(X509_CRL)
-DEFINE_STACK_OF(X509_NAME)
-DEFINE_STACK_OF_STRING()
 
 VERIFY_CB_ARGS verify_args = { -1, 0, X509_V_OK, 0 };
 
@@ -350,7 +345,6 @@ int ssl_print_point_formats(BIO *out, SSL *s)
 int ssl_print_groups(BIO *out, SSL *s, int noshared)
 {
     int i, ngroups, *groups, nid;
-    const char *gname;
 
     ngroups = SSL_get1_groups(s, NULL);
     if (ngroups <= 0)
@@ -358,39 +352,25 @@ int ssl_print_groups(BIO *out, SSL *s, int noshared)
     groups = app_malloc(ngroups * sizeof(int), "groups to print");
     SSL_get1_groups(s, groups);
 
-    BIO_puts(out, "Supported Elliptic Groups: ");
+    BIO_puts(out, "Supported groups: ");
     for (i = 0; i < ngroups; i++) {
         if (i)
             BIO_puts(out, ":");
         nid = groups[i];
-        /* If unrecognised print out hex version */
-        if (nid & TLSEXT_nid_unknown) {
-            BIO_printf(out, "0x%04X", nid & 0xFFFF);
-        } else {
-            /* TODO(TLS1.3): Get group name here */
-            /* Use NIST name for curve if it exists */
-            gname = EC_curve_nid2nist(nid);
-            if (gname == NULL)
-                gname = OBJ_nid2sn(nid);
-            BIO_printf(out, "%s", gname);
-        }
+        BIO_printf(out, "%s", SSL_group_to_name(s, nid));
     }
     OPENSSL_free(groups);
     if (noshared) {
         BIO_puts(out, "\n");
         return 1;
     }
-    BIO_puts(out, "\nShared Elliptic groups: ");
+    BIO_puts(out, "\nShared groups: ");
     ngroups = SSL_get_shared_group(s, -1);
     for (i = 0; i < ngroups; i++) {
         if (i)
             BIO_puts(out, ":");
         nid = SSL_get_shared_group(s, i);
-        /* TODO(TLS1.3): Convert for DH groups */
-        gname = EC_curve_nid2nist(nid);
-        if (gname == NULL)
-            gname = OBJ_nid2sn(nid);
-        BIO_printf(out, "%s", gname);
+        BIO_printf(out, "%s", SSL_group_to_name(s, nid));
     }
     if (ngroups == 0)
         BIO_puts(out, "NONE");
@@ -417,15 +397,13 @@ int ssl_print_tmp_key(BIO *out, SSL *s)
 #ifndef OPENSSL_NO_EC
     case EVP_PKEY_EC:
         {
-            EC_KEY *ec = EVP_PKEY_get1_EC_KEY(key);
-            int nid;
-            const char *cname;
-            nid = EC_GROUP_get_curve_name(EC_KEY_get0_group(ec));
-            EC_KEY_free(ec);
-            cname = EC_curve_nid2nist(nid);
-            if (cname == NULL)
-                cname = OBJ_nid2sn(nid);
-            BIO_printf(out, "ECDH, %s, %d bits\n", cname, EVP_PKEY_bits(key));
+            char name[80];
+            size_t name_len;
+
+            if (!EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_GROUP_NAME,
+                                                name, sizeof(name), &name_len))
+                strcpy(name, "?");
+            BIO_printf(out, "ECDH, %s, %d bits\n", name, EVP_PKEY_bits(key));
         }
     break;
 #endif
@@ -791,6 +769,7 @@ int generate_cookie_callback(SSL *ssl, unsigned char *cookie,
     /* Create buffer with peer's address and port */
     if (!BIO_ADDR_rawaddress(peer, NULL, &length)) {
         BIO_printf(bio_err, "Failed getting peer address\n");
+        BIO_ADDR_free(lpeer);
         return 0;
     }
     OPENSSL_assert(length != 0);
@@ -1045,21 +1024,20 @@ int load_excert(SSL_EXCERT **pexc)
             BIO_printf(bio_err, "Missing filename\n");
             return 0;
         }
-        exc->cert = load_cert(exc->certfile, exc->certform,
-                              "Server Certificate");
+        exc->cert = load_cert(exc->certfile, "Server Certificate");
         if (exc->cert == NULL)
             return 0;
         if (exc->keyfile != NULL) {
             exc->key = load_key(exc->keyfile, exc->keyform,
-                                0, NULL, NULL, "Server Key");
+                                0, NULL, NULL, "server key");
         } else {
             exc->key = load_key(exc->certfile, exc->certform,
-                                0, NULL, NULL, "Server Key");
+                                0, NULL, NULL, "server key");
         }
         if (exc->key == NULL)
             return 0;
         if (exc->chainfile != NULL) {
-            if (!load_certs(exc->chainfile, &exc->chain, NULL, "Server Chain"))
+            if (!load_certs(exc->chainfile, &exc->chain, NULL, "server chain"))
                 return 0;
         }
     }
@@ -1454,27 +1432,6 @@ static int security_callback_debug(const SSL *s, const SSL_CTX *ctx,
             BIO_puts(sdb->out, cname);
         }
         break;
-#endif
-#ifndef OPENSSL_NO_DH
-    case SSL_SECOP_OTHER_DH:
-        {
-            DH *dh = other;
-            EVP_PKEY *pkey = EVP_PKEY_new();
-            int fail = 1;
-
-            if (pkey != NULL) {
-                if (EVP_PKEY_set1_DH(pkey, dh)) {
-                    BIO_printf(sdb->out, "%d", EVP_PKEY_bits(pkey));
-                    fail = 0;
-                }
-
-                EVP_PKEY_free(pkey);
-            }
-            if (fail)
-                BIO_printf(sdb->out, "s_cb.c:security_callback_debug op=0x%x",
-                           op);
-            break;
-        }
 #endif
     case SSL_SECOP_OTHER_CERT:
         {

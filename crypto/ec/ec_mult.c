@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2001-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -57,7 +57,7 @@ static EC_PRE_COMP *ec_pre_comp_new(const EC_GROUP *group)
 
     ret = OPENSSL_zalloc(sizeof(*ret));
     if (ret == NULL) {
-        ECerr(EC_F_EC_PRE_COMP_NEW, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         return ret;
     }
 
@@ -68,7 +68,7 @@ static EC_PRE_COMP *ec_pre_comp_new(const EC_GROUP *group)
 
     ret->lock = CRYPTO_THREAD_lock_new();
     if (ret->lock == NULL) {
-        ECerr(EC_F_EC_PRE_COMP_NEW, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         OPENSSL_free(ret);
         return NULL;
     }
@@ -159,11 +159,11 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
         return EC_POINT_set_to_infinity(group, r);
 
     if (BN_is_zero(group->order)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, EC_R_UNKNOWN_ORDER);
+        ERR_raise(ERR_LIB_EC, EC_R_UNKNOWN_ORDER);
         return 0;
     }
     if (BN_is_zero(group->cofactor)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, EC_R_UNKNOWN_COFACTOR);
+        ERR_raise(ERR_LIB_EC, EC_R_UNKNOWN_COFACTOR);
         return 0;
     }
 
@@ -171,18 +171,18 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
 
     if (((p = EC_POINT_new(group)) == NULL)
         || ((s = EC_POINT_new(group)) == NULL)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (point == NULL) {
         if (!EC_POINT_copy(p, group->generator)) {
-            ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_EC_LIB);
+            ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
             goto err;
         }
     } else {
         if (!EC_POINT_copy(p, point)) {
-            ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_EC_LIB);
+            ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
             goto err;
         }
     }
@@ -195,12 +195,12 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
     lambda = BN_CTX_get(ctx);
     k = BN_CTX_get(ctx);
     if (k == NULL) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
     if (!BN_mul(cardinality, group->order, group->cofactor, ctx)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
 
@@ -214,12 +214,12 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
     group_top = bn_get_top(cardinality);
     if ((bn_wexpand(k, group_top + 2) == NULL)
         || (bn_wexpand(lambda, group_top + 2) == NULL)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
 
     if (!BN_copy(k, scalar)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
 
@@ -231,18 +231,18 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
          * constant-timeness
          */
         if (!BN_nnmod(k, k, cardinality, ctx)) {
-            ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+            ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
             goto err;
         }
     }
 
     if (!BN_add(lambda, k, cardinality)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
     BN_set_flags(lambda, BN_FLG_CONSTTIME);
     if (!BN_add(k, lambda, cardinality)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
     /*
@@ -262,20 +262,20 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
         || (bn_wexpand(p->X, group_top) == NULL)
         || (bn_wexpand(p->Y, group_top) == NULL)
         || (bn_wexpand(p->Z, group_top) == NULL)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_BN_LIB);
+        ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         goto err;
     }
 
     /* ensure input point is in affine coords for ladder step efficiency */
     if (!p->Z_is_one && (group->meth->make_affine == NULL
                          || !group->meth->make_affine(group, p, ctx))) {
-            ECerr(EC_F_EC_SCALAR_MUL_LADDER, ERR_R_EC_LIB);
+            ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
             goto err;
     }
 
     /* Initialize the Montgomery ladder */
     if (!ec_point_ladder_pre(group, r, s, p, ctx)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, EC_R_LADDER_PRE_FAILURE);
+        ERR_raise(ERR_LIB_EC, EC_R_LADDER_PRE_FAILURE);
         goto err;
     }
 
@@ -355,7 +355,7 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
 
         /* Perform a single step of the Montgomery ladder */
         if (!ec_point_ladder_step(group, r, s, p, ctx)) {
-            ECerr(EC_F_EC_SCALAR_MUL_LADDER, EC_R_LADDER_STEP_FAILURE);
+            ERR_raise(ERR_LIB_EC, EC_R_LADDER_STEP_FAILURE);
             goto err;
         }
         /*
@@ -370,7 +370,7 @@ int ec_scalar_mul_ladder(const EC_GROUP *group, EC_POINT *r,
 
     /* Finalize ladder (and recover full point coordinates) */
     if (!ec_point_ladder_post(group, r, s, p, ctx)) {
-        ECerr(EC_F_EC_SCALAR_MUL_LADDER, EC_R_LADDER_POST_FAILURE);
+        ERR_raise(ERR_LIB_EC, EC_R_LADDER_POST_FAILURE);
         goto err;
     }
 
@@ -467,7 +467,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
     if (scalar != NULL) {
         generator = EC_GROUP_get0_generator(group);
         if (generator == NULL) {
-            ECerr(EC_F_EC_WNAF_MUL, EC_R_UNDEFINED_GENERATOR);
+            ERR_raise(ERR_LIB_EC, EC_R_UNDEFINED_GENERATOR);
             goto err;
         }
 
@@ -495,7 +495,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 
             /* check that pre_comp looks sane */
             if (pre_comp->num != (pre_comp->numblocks * pre_points_per_block)) {
-                ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                 goto err;
             }
         } else {
@@ -520,7 +520,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
         wNAF[0] = NULL;         /* preliminary pivot */
 
     if (wsize == NULL || wNAF_len == NULL || wNAF == NULL || val_sub == NULL) {
-        ECerr(EC_F_EC_WNAF_MUL, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
@@ -550,7 +550,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
 
         if (pre_comp == NULL) {
             if (num_scalar != 1) {
-                ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                 goto err;
             }
             /* we have already generated a wNAF for 'scalar' */
@@ -559,7 +559,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
             size_t tmp_len = 0;
 
             if (num_scalar != 0) {
-                ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                 goto err;
             }
 
@@ -602,7 +602,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
                      */
                     numblocks = (tmp_len + blocksize - 1) / blocksize;
                     if (numblocks > pre_comp->numblocks) {
-                        ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                        ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                         OPENSSL_free(tmp_wNAF);
                         goto err;
                     }
@@ -617,7 +617,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
                     if (i < totalnum - 1) {
                         wNAF_len[i] = blocksize;
                         if (tmp_len < blocksize) {
-                            ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                            ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                             OPENSSL_free(tmp_wNAF);
                             goto err;
                         }
@@ -632,7 +632,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
                     wNAF[i + 1] = NULL;
                     wNAF[i] = OPENSSL_malloc(wNAF_len[i]);
                     if (wNAF[i] == NULL) {
-                        ECerr(EC_F_EC_WNAF_MUL, ERR_R_MALLOC_FAILURE);
+                        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
                         OPENSSL_free(tmp_wNAF);
                         goto err;
                     }
@@ -641,7 +641,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
                         max_len = wNAF_len[i];
 
                     if (*tmp_points == NULL) {
-                        ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+                        ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                         OPENSSL_free(tmp_wNAF);
                         goto err;
                     }
@@ -661,7 +661,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
      */
     val = OPENSSL_malloc((num_val + 1) * sizeof(val[0]));
     if (val == NULL) {
-        ECerr(EC_F_EC_WNAF_MUL, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
     val[num_val] = NULL;        /* pivot element */
@@ -678,7 +678,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
         }
     }
     if (!(v == val + num_val)) {
-        ECerr(EC_F_EC_WNAF_MUL, ERR_R_INTERNAL_ERROR);
+        ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
         goto err;
     }
 
@@ -758,7 +758,7 @@ int ec_wNAF_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *scalar,
                          * group.
                          */
                         if (!ec_point_blind_coordinates(group, r, ctx)) {
-                            ECerr(EC_F_EC_WNAF_MUL, EC_R_POINT_COORDINATES_BLIND_FAILURE);
+                            ERR_raise(ERR_LIB_EC, EC_R_POINT_COORDINATES_BLIND_FAILURE);
                             goto err;
                         }
 
@@ -835,6 +835,7 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
     EC_POINT **points = NULL;
     EC_PRE_COMP *pre_comp;
     int ret = 0;
+    int used_ctx = 0;
 #ifndef FIPS_MODULE
     BN_CTX *new_ctx = NULL;
 #endif
@@ -846,7 +847,7 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
 
     generator = EC_GROUP_get0_generator(group);
     if (generator == NULL) {
-        ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, EC_R_UNDEFINED_GENERATOR);
+        ERR_raise(ERR_LIB_EC, EC_R_UNDEFINED_GENERATOR);
         goto err;
     }
 
@@ -858,12 +859,13 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
         goto err;
 
     BN_CTX_start(ctx);
+    used_ctx = 1;
 
     order = EC_GROUP_get0_order(group);
     if (order == NULL)
         goto err;
     if (BN_is_zero(order)) {
-        ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, EC_R_UNKNOWN_ORDER);
+        ERR_raise(ERR_LIB_EC, EC_R_UNKNOWN_ORDER);
         goto err;
     }
 
@@ -891,7 +893,7 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
 
     points = OPENSSL_malloc(sizeof(*points) * (num + 1));
     if (points == NULL) {
-        ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
@@ -899,14 +901,14 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
     var[num] = NULL;            /* pivot */
     for (i = 0; i < num; i++) {
         if ((var[i] = EC_POINT_new(group)) == NULL) {
-            ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_MALLOC_FAILURE);
+            ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
             goto err;
         }
     }
 
     if ((tmp_point = EC_POINT_new(group)) == NULL
         || (base = EC_POINT_new(group)) == NULL) {
-        ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_MALLOC_FAILURE);
+        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         goto err;
     }
 
@@ -938,7 +940,7 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
             size_t k;
 
             if (blocksize <= 2) {
-                ECerr(EC_F_EC_WNAF_PRECOMPUTE_MULT, ERR_R_INTERNAL_ERROR);
+                ERR_raise(ERR_LIB_EC, ERR_R_INTERNAL_ERROR);
                 goto err;
             }
 
@@ -967,7 +969,8 @@ int ec_wNAF_precompute_mult(EC_GROUP *group, BN_CTX *ctx)
     ret = 1;
 
  err:
-    BN_CTX_end(ctx);
+    if (used_ctx)
+        BN_CTX_end(ctx);
 #ifndef FIPS_MODULE
     BN_CTX_free(new_ctx);
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright 2005 Nokia. All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -7,9 +7,6 @@
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
-
-/* We need to use some engine deprecated APIs */
-#define OPENSSL_SUPPRESS_DEPRECATED
 
 #include "e_os.h"
 #include <ctype.h>
@@ -58,12 +55,6 @@ typedef unsigned int u_int;
 #  include <sanitizer/msan_interface.h>
 # endif
 #endif
-
-DEFINE_STACK_OF(X509)
-DEFINE_STACK_OF(X509_CRL)
-DEFINE_STACK_OF(X509_NAME)
-DEFINE_STACK_OF(SCT)
-DEFINE_STACK_OF_STRING()
 
 #undef BUFSIZZ
 #define BUFSIZZ 1024*8
@@ -1019,7 +1010,6 @@ int s_client_main(int argc, char **argv)
 # endif
 #endif
 
-    prog = opt_progname(argv[0]);
     c_quiet = 0;
     c_debug = 0;
     c_showcerts = 0;
@@ -1028,7 +1018,7 @@ int s_client_main(int argc, char **argv)
     cctx = SSL_CONF_CTX_new();
 
     if (vpm == NULL || cctx == NULL) {
-        BIO_printf(bio_err, "%s: out of memory\n", prog);
+        BIO_printf(bio_err, "%s: out of memory\n", opt_getprog());
         goto end;
     }
 
@@ -1210,7 +1200,7 @@ int s_client_main(int argc, char **argv)
             break;
         case OPT_SSL_CLIENT_ENGINE:
 #ifndef OPENSSL_NO_ENGINE
-            ssl_client_engine = ENGINE_by_id(opt_arg());
+            ssl_client_engine = setup_engine(opt_arg(), 0);
             if (ssl_client_engine == NULL) {
                 BIO_printf(bio_err, "Error getting client auth engine\n");
                 goto opthelp;
@@ -1581,6 +1571,24 @@ int s_client_main(int argc, char **argv)
         }
     }
 
+    /* Optional argument is connect string if -connect not used. */
+    argc = opt_num_rest();
+    if (argc == 1) {
+        /*
+         * Don't allow -connect and a separate argument.
+         */
+        if (connectstr != NULL) {
+            BIO_printf(bio_err,
+                       "%s: cannot provide both -connect option and target parameter\n",
+                       prog);
+            goto opthelp;
+        }
+        connect_type = use_inet;
+        freeandcopy(&connectstr, *opt_rest());
+    } else if (argc != 0) {
+        goto opthelp;
+    }
+
     if (count4or6 >= 2) {
         BIO_printf(bio_err, "%s: Can't use both -4 and -6\n", prog);
         goto opthelp;
@@ -1598,23 +1606,6 @@ int s_client_main(int argc, char **argv)
                prog);
             goto opthelp;
         }
-    }
-    argc = opt_num_rest();
-    if (argc == 1) {
-        /* If there's a positional argument, it's the equivalent of
-         * OPT_CONNECT.
-         * Don't allow -connect and a separate argument.
-         */
-        if (connectstr != NULL) {
-            BIO_printf(bio_err,
-                       "%s: must not provide both -connect option and target parameter\n",
-                       prog);
-            goto opthelp;
-        }
-        connect_type = use_inet;
-        freeandcopy(&connectstr, *opt_rest());
-    } else if (argc != 0) {
-        goto opthelp;
     }
 
 #ifndef OPENSSL_NO_NEXTPROTONEG
@@ -1734,13 +1725,13 @@ int s_client_main(int argc, char **argv)
 
     if (key_file != NULL) {
         key = load_key(key_file, key_format, 0, pass, e,
-                       "client certificate private key file");
+                       "client certificate private key");
         if (key == NULL)
             goto end;
     }
 
     if (cert_file != NULL) {
-        cert = load_cert_pass(cert_file, cert_format, pass, "client certificate file");
+        cert = load_cert_pass(cert_file, 1, pass, "client certificate");
         if (cert == NULL)
             goto end;
     }
@@ -1752,7 +1743,7 @@ int s_client_main(int argc, char **argv)
 
     if (crl_file != NULL) {
         X509_CRL *crl;
-        crl = load_crl(crl_file, crl_format, "CRL");
+        crl = load_crl(crl_file, "CRL");
         if (crl == NULL)
             goto end;
         crls = sk_X509_CRL_new_null();
@@ -1887,10 +1878,10 @@ int s_client_main(int argc, char **argv)
         if (!SSL_CTX_set_client_cert_engine(ctx, ssl_client_engine)) {
             BIO_puts(bio_err, "Error setting client auth engine\n");
             ERR_print_errors(bio_err);
-            ENGINE_free(ssl_client_engine);
+            release_engine(ssl_client_engine);
             goto end;
         }
-        ENGINE_free(ssl_client_engine);
+        release_engine(ssl_client_engine);
     }
 #endif
 
